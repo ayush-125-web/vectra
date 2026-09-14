@@ -1,0 +1,94 @@
+import StatReadout from '../components/StatReadout'
+import CityMap from '../components/CityMap'
+import { summary, cameras, detections, alerts, cameraLoad } from '../data/mockData'
+
+export default function CommandCenter() {
+  const recent = [...detections].reverse().slice(0, 6)
+  const topAlerts = alerts.slice(0, 3)
+
+  return (
+    <div className="p-8 space-y-6">
+      <header className="flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-semibold text-ink-100">Command Center</h1>
+          <p className="text-sm text-ink-500 mt-1">Five-node ANPR network — Chennai prototype grid</p>
+        </div>
+        <div className="flex items-center gap-2 text-xs font-mono text-signal-green">
+          <span className="w-1.5 h-1.5 rounded-full bg-signal-green live-dot" />
+          LIVE
+        </div>
+      </header>
+
+      <div className="grid grid-cols-4 gap-4">
+        <StatReadout label="Active cameras" value={summary.activeCameras} />
+        <StatReadout label="Vehicles today" value={summary.vehiclesToday.toLocaleString()} />
+        <StatReadout label="Avg. speed" value={summary.avgSpeed} unit="km/h" />
+        <StatReadout label="Active alerts" value={summary.activeAlerts} tone="red" />
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="col-span-2 border border-base-500 bg-base-800 rounded p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-medium text-ink-300">Camera network</h2>
+            <span className="text-[11px] font-mono text-ink-700">{cameras.length} nodes</span>
+          </div>
+          <div className="h-80">
+            <CityMap />
+          </div>
+        </div>
+
+        <div className="border border-base-500 bg-base-800 rounded p-5">
+          <h2 className="text-sm font-medium text-ink-300 mb-3">Recent detections</h2>
+          <div className="space-y-2.5">
+            {recent.map(d => (
+              <div key={d.id} className="flex items-center justify-between text-sm border-b border-base-600 pb-2.5 last:border-0 last:pb-0">
+                <div>
+                  <div className="font-mono text-ink-100">{d.plate}</div>
+                  <div className="text-[11px] text-ink-700">{d.camera} · {d.time}</div>
+                </div>
+                <span className="font-mono text-[11px] text-ink-500">{Math.round(d.confidence * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="border border-base-500 bg-base-800 rounded p-5">
+          <h2 className="text-sm font-medium text-ink-300 mb-4">Density by node</h2>
+          <div className="space-y-3">
+            {cameraLoad.map(c => (
+              <div key={c.camera} className="flex items-center gap-3">
+                <span className="font-mono text-[11px] text-ink-500 w-16">{c.camera}</span>
+                <div className="flex-1 h-2 bg-base-600 rounded overflow-hidden">
+                  <div
+                    className={`h-full ${c.density > 75 ? 'bg-signal-red' : c.density > 55 ? 'bg-signal-amber' : 'bg-signal-blue'}`}
+                    style={{ width: `${Math.min(c.density, 100)}%` }}
+                  />
+                </div>
+                <span className="font-mono text-[11px] text-ink-500 w-16 text-right">{c.density}/min</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="border border-base-500 bg-base-800 rounded p-5">
+          <h2 className="text-sm font-medium text-ink-300 mb-4">Priority alerts</h2>
+          <div className="space-y-2.5">
+            {topAlerts.map(a => (
+              <div key={a.id} className="flex items-start gap-3 text-sm">
+                <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
+                  a.severity === 'HIGH' ? 'bg-signal-red' : a.severity === 'MEDIUM' ? 'bg-signal-amber' : 'bg-ink-700'
+                }`} />
+                <div>
+                  <div className="text-ink-100 font-mono text-[13px]">{a.plate}</div>
+                  <div className="text-[11px] text-ink-500">{a.camera} · {a.time} — {a.note}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
