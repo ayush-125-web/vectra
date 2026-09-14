@@ -1,3 +1,19 @@
+"""
+ANPR City-Wide Vehicle Tracking Database
+==========================================
+Class-based storage and query API for ANPR/OCR detections from CCTV
+cameras. Two public classes:
+
+    ANPRDatabase       - schema setup, inserting cameras/detections/blacklist,
+                          and macro traffic analytics queries
+    PlateQueryEngine   - takes a plate number and returns the complete
+                          trajectory report (cameras crossed, speed, etc.)
+
+Uses SQLite for simplicity. To move to PostgreSQL/MySQL later, the
+schema (CREATE TABLE statements) can be reused almost as-is — just swap
+the connection layer (e.g. psycopg2 / mysql-connector) for sqlite3.
+"""
+
 import sqlite3
 import math
 from datetime import datetime
@@ -6,230 +22,330 @@ from datetime import datetime
 DB_NAME = "anpr_system.db"
 
 
-
-def get_connection(db_name=DB_NAME):
-    conn = sqlite3.connect(db_name)
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.row_factory = sqlite3.Row  # lets us access columns by name
-    return conn
-
-
-def create_schema(conn):
-    cur = conn.cursor()
-
-    # Cameras: static metadata about each ANPR/CCTV node
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS cameras (
-        camera_id       TEXT PRIMARY KEY,
-        location_name   TEXT NOT NULL,
-        latitude        REAL NOT NULL,
-        longitude       REAL NOT NULL,
-        road_name       TEXT,
-        direction_faced TEXT,               -- e.g. 'North', 'Inbound'
-        sector          TEXT                -- city zone/sector for aggregation
-    )
-    """)
-
-    # Vehicles: one row per unique (normalized) plate number
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS vehicles (
-        plate_number    TEXT PRIMARY KEY,   -- normalized/corrected plate
-        first_seen      TEXT,               -- timestamp of first detection
-        last_seen       TEXT,               -- timestamp of most recent detection
-        vehicle_type    TEXT,               -- optional: car/bike/truck if classified
-        notes           TEXT
-    )
-    """)
-
-    # Detections: one row per individual sighting/frame event from the OCR pipeline
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS detections (
-        detection_id      INTEGER PRIMARY KEY AUTOINCREMENT,
-        plate_number       TEXT NOT NULL,
-        raw_ocr_text        TEXT,             -- unprocessed OCR output (before correction)
-        camera_id            TEXT NOT NULL,
-        timestamp             TEXT NOT NULL,    -- ISO format: 'YYYY-MM-DD HH:MM:SS'
-        confidence_score     REAL,             -- OCR confidence, 0.0 - 1.0
-        visibility_state     TEXT,             -- e.g. 'clear', 'angled', 'blurred',
-                                                --      'dirty_plate', 'low_light'
-        image_path            TEXT,             -- path/URL to the cropped plate image
-        FOREIGN KEY (plate_number) REFERENCES vehicles(plate_number),
-        FOREIGN KEY (camera_id) REFERENCES cameras(camera_id)
-    )
-    """)
-
-    # Blacklist / alerts
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS blacklist (
-        blacklist_id    INTEGER PRIMARY KEY AUTOINCREMENT,
-        plate_number    TEXT NOT NULL,
-        reason          TEXT,
-        flagged_on      TEXT,
-        status          TEXT DEFAULT 'active',   -- 'active' / 'resolved'
-        FOREIGN KEY (plate_number) REFERENCES vehicles(plate_number)
-    )
-    """)
-
-    # Indexes for the query patterns we'll actually use
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_detections_plate ON detections(plate_number)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_detections_time ON detections(timestamp)")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_detections_camera ON detections(camera_id)")
-
-    conn.commit()
-
-
-# ---------------------------------------------------------------------
-# 2. INSERT / INGEST FUNCTIONS  (what your friend's OCR script feeds into)
-# ---------------------------------------------------------------------
-
-def add_camera(conn, camera_id, location_name, latitude, longitude,
-                road_name=None, direction_faced=None, sector=None):
-    conn.execute("""
-        INSERT OR IGNORE INTO cameras
-        (camera_id, location_name, latitude, longitude, road_name, direction_faced, sector)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (camera_id, location_name, latitude, longitude, road_name, direction_faced, sector))
-    conn.commit()
-
-
-def add_detection(conn, plate_number, raw_ocr_text, camera_id, timestamp,
-                   confidence_score, visibility_state, image_path=None):
+class ANPRDatabase:
     """
-    Call this once per OCR detection event.
-    `plate_number` should be the corrected/normalized plate (uppercase,
-    no spaces/dashes) — keep `raw_ocr_text` as whatever OCR actually output,
-    so noisy reads don't corrupt the vehicle record.
+    Public API for storing and analyzing ANPR camera data.
+
+    Usage:
+        db = ANPRDatabase()                 # connects + creates schema
+        db.add_camera("CAM001", "MG Road Junction", 13.0068, 80.2496)
+        db.add_detection("TN01AB1234", "TN01AB1234", "CAM001",
+                          "2026-09-14 08:15:00", 0.96, "clear")
+        db.get_traffic_density_by_camera()
     """
-    cur = conn.cursor()
 
-    # Ensure the vehicle exists, then update first/last seen
-    cur.execute("SELECT plate_number, first_seen FROM vehicles WHERE plate_number = ?",
-                (plate_number,))
-    existing = cur.fetchone()
+    def __init__(self, db_name: str = DB_NAME):
+        self.db_name = db_name
+        self.conn = self.connect()
+        self.create_schema()
 
-    if existing is None:
+    # -----------------------------------------------------------------
+    # Connection / schema
+    # -----------------------------------------------------------------
+
+    def connect(self) -> sqlite3.Connection:
+        """Open (or create) the database file and return a connection."""
+        conn = sqlite3.connect(self.db_name)
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def create_schema(self) -> None:
+        """Creates all tables and indexes if they don't already exist."""
+        cur = self.conn.cursor()
+
         cur.execute("""
-            INSERT INTO vehicles (plate_number, first_seen, last_seen)
+        CREATE TABLE IF NOT EXISTS cameras (
+            camera_id       TEXT PRIMARY KEY,
+            location_name   TEXT NOT NULL,
+            latitude        REAL NOT NULL,
+            longitude       REAL NOT NULL,
+            road_name       TEXT,
+            direction_faced TEXT,
+            sector          TEXT
+        )
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vehicles (
+            plate_number    TEXT PRIMARY KEY,
+            first_seen      TEXT,
+            last_seen       TEXT,
+            vehicle_type    TEXT,
+            notes           TEXT
+        )
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS detections (
+            detection_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+            plate_number      TEXT NOT NULL,
+            raw_ocr_text      TEXT,
+            camera_id         TEXT NOT NULL,
+            timestamp         TEXT NOT NULL,
+            confidence_score  REAL,
+            visibility_state  TEXT,
+            image_path        TEXT,
+            FOREIGN KEY (plate_number) REFERENCES vehicles(plate_number),
+            FOREIGN KEY (camera_id) REFERENCES cameras(camera_id)
+        )
+        """)
+
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS blacklist (
+            blacklist_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+            plate_number    TEXT NOT NULL,
+            reason          TEXT,
+            flagged_on      TEXT,
+            status          TEXT DEFAULT 'active',
+            FOREIGN KEY (plate_number) REFERENCES vehicles(plate_number)
+        )
+        """)
+
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_detections_plate ON detections(plate_number)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_detections_time ON detections(timestamp)")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_detections_camera ON detections(camera_id)")
+
+        self.conn.commit()
+
+    def close(self) -> None:
+        """Close the database connection."""
+        self.conn.close()
+
+    # -----------------------------------------------------------------
+    # Insert / ingest
+    # -----------------------------------------------------------------
+
+    def add_camera(self, camera_id, location_name, latitude, longitude,
+                    road_name=None, direction_faced=None, sector=None) -> None:
+        """Register a new camera node. Safe to call repeatedly (ignores duplicates)."""
+        self.conn.execute("""
+            INSERT OR IGNORE INTO cameras
+            (camera_id, location_name, latitude, longitude, road_name, direction_faced, sector)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (camera_id, location_name, latitude, longitude, road_name, direction_faced, sector))
+        self.conn.commit()
+
+    def add_detection(self, plate_number, raw_ocr_text, camera_id, timestamp,
+                       confidence_score, visibility_state, image_path=None) -> None:
+        """
+        Call this once per OCR detection event (this is what your friend's
+        OCR pipeline calls for every plate it reads in a frame).
+
+        `plate_number` should be the corrected/normalized plate; keep
+        `raw_ocr_text` as the literal OCR output, even if noisy.
+        """
+        cur = self.conn.cursor()
+
+        cur.execute("SELECT plate_number, first_seen FROM vehicles WHERE plate_number = ?",
+                    (plate_number,))
+        existing = cur.fetchone()
+
+        if existing is None:
+            cur.execute("""
+                INSERT INTO vehicles (plate_number, first_seen, last_seen)
+                VALUES (?, ?, ?)
+            """, (plate_number, timestamp, timestamp))
+        else:
+            cur.execute("""
+                UPDATE vehicles SET last_seen = ?
+                WHERE plate_number = ? AND (last_seen IS NULL OR ? > last_seen)
+            """, (timestamp, plate_number, timestamp))
+            cur.execute("""
+                UPDATE vehicles SET first_seen = ?
+                WHERE plate_number = ? AND (first_seen IS NULL OR ? < first_seen)
+            """, (timestamp, plate_number, timestamp))
+
+        cur.execute("""
+            INSERT INTO detections
+            (plate_number, raw_ocr_text, camera_id, timestamp, confidence_score,
+             visibility_state, image_path)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (plate_number, raw_ocr_text, camera_id, timestamp, confidence_score,
+              visibility_state, image_path))
+
+        self.conn.commit()
+
+    def add_to_blacklist(self, plate_number, reason, flagged_on=None) -> None:
+        """Flag a plate as blacklisted (e.g. reported stolen)."""
+        flagged_on = flagged_on or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.conn.execute("""
+            INSERT INTO blacklist (plate_number, reason, flagged_on)
             VALUES (?, ?, ?)
-        """, (plate_number, timestamp, timestamp))
-    else:
-        cur.execute("""
-            UPDATE vehicles
-            SET last_seen = ?
-            WHERE plate_number = ? AND (last_seen IS NULL OR ? > last_seen)
-        """, (timestamp, plate_number, timestamp))
-        cur.execute("""
-            UPDATE vehicles
-            SET first_seen = ?
-            WHERE plate_number = ? AND (first_seen IS NULL OR ? < first_seen)
-        """, (timestamp, plate_number, timestamp))
+        """, (plate_number, reason, flagged_on))
+        self.conn.commit()
 
-    # Insert the detection event itself
-    cur.execute("""
-        INSERT INTO detections
-        (plate_number, raw_ocr_text, camera_id, timestamp, confidence_score,
-         visibility_state, image_path)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (plate_number, raw_ocr_text, camera_id, timestamp, confidence_score,
-          visibility_state, image_path))
+    # -----------------------------------------------------------------
+    # Trajectory (raw data - used by PlateQueryEngine, but public too)
+    # -----------------------------------------------------------------
 
-    conn.commit()
+    def get_plate_trajectory(self, plate_number, start_time=None, end_time=None) -> list:
+        """Full chronological list of detections for one plate, with camera info joined in."""
+        query = """
+            SELECT d.timestamp, d.plate_number, d.confidence_score, d.visibility_state,
+                   c.camera_id, c.location_name, c.latitude, c.longitude, c.road_name
+            FROM detections d
+            JOIN cameras c ON d.camera_id = c.camera_id
+            WHERE d.plate_number = ?
+        """
+        params = [plate_number]
 
+        if start_time:
+            query += " AND d.timestamp >= ?"
+            params.append(start_time)
+        if end_time:
+            query += " AND d.timestamp <= ?"
+            params.append(end_time)
 
-def add_to_blacklist(conn, plate_number, reason, flagged_on=None):
-    flagged_on = flagged_on or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    conn.execute("""
-        INSERT INTO blacklist (plate_number, reason, flagged_on)
-        VALUES (?, ?, ?)
-    """, (plate_number, reason, flagged_on))
-    conn.commit()
+        query += " ORDER BY d.timestamp ASC"
 
+        cur = self.conn.cursor()
+        cur.execute(query, params)
+        return [dict(row) for row in cur.fetchall()]
 
-# ---------------------------------------------------------------------
-# 3. TRAJECTORY TRACKING  (Single Plate Trajectory module)
-# ---------------------------------------------------------------------
+    # -----------------------------------------------------------------
+    # Macro traffic analytics
+    # -----------------------------------------------------------------
 
-def get_plate_trajectory(conn, plate_number, start_time=None, end_time=None):
-    """
-    Returns the full chronological path of a single vehicle:
-    camera location, coordinates, timestamp, and visibility state
-    for every detection, ordered by time.
-    """
-    query = """
-        SELECT d.timestamp, d.plate_number, d.confidence_score, d.visibility_state,
-               c.camera_id, c.location_name, c.latitude, c.longitude, c.road_name
-        FROM detections d
-        JOIN cameras c ON d.camera_id = c.camera_id
-        WHERE d.plate_number = ?
-    """
-    params = [plate_number]
+    def get_traffic_density_by_camera(self, start_time=None, end_time=None) -> list:
+        """Vehicle count per camera — feeds the heatmap layer."""
+        query = """
+            SELECT c.camera_id, c.location_name, c.latitude, c.longitude,
+                   COUNT(d.detection_id) AS vehicle_count
+            FROM detections d
+            JOIN cameras c ON d.camera_id = c.camera_id
+            WHERE 1=1
+        """
+        params = []
+        if start_time:
+            query += " AND d.timestamp >= ?"
+            params.append(start_time)
+        if end_time:
+            query += " AND d.timestamp <= ?"
+            params.append(end_time)
 
-    if start_time:
-        query += " AND d.timestamp >= ?"
-        params.append(start_time)
-    if end_time:
-        query += " AND d.timestamp <= ?"
-        params.append(end_time)
+        query += " GROUP BY c.camera_id ORDER BY vehicle_count DESC"
 
-    query += " ORDER BY d.timestamp ASC"
+        cur = self.conn.cursor()
+        cur.execute(query, params)
+        return [dict(row) for row in cur.fetchall()]
 
-    cur = conn.cursor()
-    cur.execute(query, params)
-    return [dict(row) for row in cur.fetchall()]
+    def get_hourly_traffic_trend(self, camera_id=None) -> list:
+        """Vehicle count bucketed by hour — for flow-over-time trend charts."""
+        query = """
+            SELECT strftime('%Y-%m-%d %H:00', timestamp) AS hour_bucket,
+                   COUNT(*) AS vehicle_count
+            FROM detections
+            WHERE 1=1
+        """
+        params = []
+        if camera_id:
+            query += " AND camera_id = ?"
+            params.append(camera_id)
 
+        query += " GROUP BY hour_bucket ORDER BY hour_bucket ASC"
 
-# ---------------------------------------------------------------------
-# 3b. PLATE QUERY ENGINE  (your friend's "search a plate -> full report" task)
-# ---------------------------------------------------------------------
+        cur = self.conn.cursor()
+        cur.execute(query, params)
+        return [dict(row) for row in cur.fetchall()]
 
-def _haversine_km(lat1, lon1, lat2, lon2):
-    """Straight-line distance between two GPS points, in km."""
-    R = 6371.0
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
-    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    def get_origin_destination_pairs(self, plate_number=None) -> list:
+        """Approximates O-D flow via consecutive camera-to-camera hops per vehicle."""
+        query = "SELECT plate_number, camera_id, timestamp FROM detections"
+        params = []
+        if plate_number:
+            query += " WHERE plate_number = ?"
+            params.append(plate_number)
+        query += " ORDER BY plate_number, timestamp ASC"
+
+        cur = self.conn.cursor()
+        cur.execute(query, params)
+        rows = cur.fetchall()
+
+        od_pairs = []
+        prev_plate, prev_camera = None, None
+        for row in rows:
+            if row["plate_number"] == prev_plate and prev_camera is not None:
+                od_pairs.append({
+                    "plate_number": row["plate_number"],
+                    "origin_camera": prev_camera,
+                    "destination_camera": row["camera_id"],
+                    "arrival_time": row["timestamp"]
+                })
+            prev_plate, prev_camera = row["plate_number"], row["camera_id"]
+
+        return od_pairs
+
+    def get_active_blacklist_alerts(self) -> list:
+        """Any recent detection of a blacklisted plate — for the alert system."""
+        query = """
+            SELECT b.plate_number, b.reason, b.flagged_on,
+                   d.timestamp AS last_detected, c.location_name
+            FROM blacklist b
+            JOIN detections d ON b.plate_number = d.plate_number
+            JOIN cameras c ON d.camera_id = c.camera_id
+            WHERE b.status = 'active'
+            ORDER BY d.timestamp DESC
+        """
+        cur = self.conn.cursor()
+        cur.execute(query)
+        return [dict(row) for row in cur.fetchall()]
+
+    # -----------------------------------------------------------------
+    # Debug helper
+    # -----------------------------------------------------------------
+
+    def dump_table(self, table_name: str) -> list:
+        """Print and return every row of a given table — quick debugging aid."""
+        cur = self.conn.cursor()
+        cur.execute(f"SELECT * FROM {table_name}")
+        rows = [dict(row) for row in cur.fetchall()]
+        for row in rows:
+            print(row)
+        return rows
 
 
 class PlateQueryEngine:
     """
     Takes a plate number as a query and returns a complete trajectory
-    report: does it exist in the DB, every camera it crossed (in order),
+    report: whether it exists, every camera it crossed (in order),
     timestamps, estimated speed between consecutive cameras, total
-    cameras crossed, first/last appearance, and whether it's blacklisted.
+    cameras crossed, first/last appearance, and blacklist status.
 
     Usage:
-        conn = get_connection()
-        engine = PlateQueryEngine(conn)
+        db = ANPRDatabase()
+        engine = PlateQueryEngine(db)
         report = engine.query("TN01AB1234")
     """
 
-    def __init__(self, conn):
-        self.conn = conn
+    def __init__(self, database: ANPRDatabase):
+        self.database = database
 
-    def exists(self, plate_number):
-        cur = self.conn.cursor()
+    @staticmethod
+    def haversine_km(lat1, lon1, lat2, lon2) -> float:
+        """Straight-line distance between two GPS points, in km."""
+        R = 6371.0
+        p1, p2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2) ** 2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    def exists(self, plate_number: str) -> bool:
+        """Check whether a plate has any record in the database."""
+        cur = self.database.conn.cursor()
         cur.execute("SELECT 1 FROM vehicles WHERE plate_number = ?", (plate_number,))
         return cur.fetchone() is not None
 
-    def _raw_detections(self, plate_number, start_time=None, end_time=None):
-        """Chronological detections joined with camera info (reuses the
-        trajectory function already defined above)."""
-        return get_plate_trajectory(self.conn, plate_number, start_time, end_time)
-
-    def _compute_hops(self, detections):
-        """
-        Builds camera-to-camera hop info: distance, time elapsed, and
-        estimated speed (km/h) between each consecutive pair of detections.
-        """
+    def compute_hops(self, detections: list) -> list:
+        """Builds camera-to-camera hop info: distance, time elapsed, estimated speed."""
         hops = []
         for prev, curr in zip(detections, detections[1:]):
             t1 = datetime.strptime(prev["timestamp"], "%Y-%m-%d %H:%M:%S")
             t2 = datetime.strptime(curr["timestamp"], "%Y-%m-%d %H:%M:%S")
             elapsed_hours = (t2 - t1).total_seconds() / 3600.0
 
-            distance_km = _haversine_km(
+            distance_km = self.haversine_km(
                 prev["latitude"], prev["longitude"],
                 curr["latitude"], curr["longitude"]
             )
@@ -247,8 +363,9 @@ class PlateQueryEngine:
             })
         return hops
 
-    def _is_blacklisted(self, plate_number):
-        cur = self.conn.cursor()
+    def is_blacklisted(self, plate_number: str):
+        """Returns blacklist info dict if flagged and active, else None."""
+        cur = self.database.conn.cursor()
         cur.execute("""
             SELECT reason, flagged_on FROM blacklist
             WHERE plate_number = ? AND status = 'active'
@@ -257,21 +374,10 @@ class PlateQueryEngine:
         row = cur.fetchone()
         return dict(row) if row else None
 
-    def query(self, plate_number, start_time=None, end_time=None):
+    def query(self, plate_number: str, start_time=None, end_time=None) -> dict:
         """
-        Main entry point. Returns a dict:
-        {
-            "plate_number": ...,
-            "found": True/False,
-            "total_cameras_crossed": int,
-            "total_detections": int,
-            "first_camera": {...},
-            "last_camera": {...},
-            "route": [ ...chronological list of every detection... ],
-            "hops": [ ...distance/time/speed between consecutive cameras... ],
-            "average_speed_kmh": float or None,
-            "blacklist_status": {...} or None
-        }
+        Main public entry point. Returns a dict with the full trajectory
+        report for the given plate number.
         """
         plate_number = plate_number.strip().upper()
 
@@ -282,7 +388,7 @@ class PlateQueryEngine:
                 "message": "No record found for this plate in the database."
             }
 
-        detections = self._raw_detections(plate_number, start_time, end_time)
+        detections = self.database.get_plate_trajectory(plate_number, start_time, end_time)
 
         if not detections:
             return {
@@ -291,7 +397,7 @@ class PlateQueryEngine:
                 "message": "Plate exists in vehicle records but has no detections in this time range."
             }
 
-        hops = self._compute_hops(detections)
+        hops = self.compute_hops(detections)
         speeds = [h["estimated_speed_kmh"] for h in hops if h["estimated_speed_kmh"] is not None]
         avg_speed = round(sum(speeds) / len(speeds), 2) if speeds else None
 
@@ -315,10 +421,10 @@ class PlateQueryEngine:
             "route": detections,
             "hops": hops,
             "average_speed_kmh": avg_speed,
-            "blacklist_status": self._is_blacklisted(plate_number)
+            "blacklist_status": self.is_blacklisted(plate_number)
         }
 
-    def print_report(self, plate_number, start_time=None, end_time=None):
+    def print_report(self, plate_number: str, start_time=None, end_time=None) -> dict:
         """Pretty-prints the trajectory report to console — handy for demos."""
         report = self.query(plate_number, start_time, end_time)
 
@@ -360,148 +466,41 @@ class PlateQueryEngine:
 
 
 # ---------------------------------------------------------------------
-# 4. MACRO TRAFFIC ANALYTICS  (Traffic Analytics Dashboard module)
-# ---------------------------------------------------------------------
-
-def get_traffic_density_by_camera(conn, start_time=None, end_time=None):
-    """Vehicle count per camera — feeds the heatmap layer."""
-    query = """
-        SELECT c.camera_id, c.location_name, c.latitude, c.longitude,
-               COUNT(d.detection_id) AS vehicle_count
-        FROM detections d
-        JOIN cameras c ON d.camera_id = c.camera_id
-        WHERE 1=1
-    """
-    params = []
-    if start_time:
-        query += " AND d.timestamp >= ?"
-        params.append(start_time)
-    if end_time:
-        query += " AND d.timestamp <= ?"
-        params.append(end_time)
-
-    query += " GROUP BY c.camera_id ORDER BY vehicle_count DESC"
-
-    cur = conn.cursor()
-    cur.execute(query, params)
-    return [dict(row) for row in cur.fetchall()]
-
-
-def get_hourly_traffic_trend(conn, camera_id=None):
-    """Vehicle count bucketed by hour — for flow-over-time trend charts."""
-    query = """
-        SELECT strftime('%Y-%m-%d %H:00', timestamp) AS hour_bucket,
-               COUNT(*) AS vehicle_count
-        FROM detections
-        WHERE 1=1
-    """
-    params = []
-    if camera_id:
-        query += " AND camera_id = ?"
-        params.append(camera_id)
-
-    query += " GROUP BY hour_bucket ORDER BY hour_bucket ASC"
-
-    cur = conn.cursor()
-    cur.execute(query, params)
-    return [dict(row) for row in cur.fetchall()]
-
-
-def get_origin_destination_pairs(conn, plate_number=None):
-    """
-    Approximates origin-destination flow by looking at consecutive
-    camera-to-camera hops per vehicle (first camera -> next camera).
-    """
-    query = """
-        SELECT plate_number, camera_id, timestamp
-        FROM detections
-    """
-    params = []
-    if plate_number:
-        query += " WHERE plate_number = ?"
-        params.append(plate_number)
-    query += " ORDER BY plate_number, timestamp ASC"
-
-    cur = conn.cursor()
-    cur.execute(query, params)
-    rows = cur.fetchall()
-
-    od_pairs = []
-    prev_plate, prev_camera = None, None
-    for row in rows:
-        if row["plate_number"] == prev_plate and prev_camera is not None:
-            od_pairs.append({
-                "plate_number": row["plate_number"],
-                "origin_camera": prev_camera,
-                "destination_camera": row["camera_id"],
-                "arrival_time": row["timestamp"]
-            })
-        prev_plate, prev_camera = row["plate_number"], row["camera_id"]
-
-    return od_pairs
-
-
-def get_active_blacklist_alerts(conn):
-    """Any recent detection of a blacklisted plate — for the alert system."""
-    query = """
-        SELECT b.plate_number, b.reason, b.flagged_on,
-               d.timestamp AS last_detected, c.location_name
-        FROM blacklist b
-        JOIN detections d ON b.plate_number = d.plate_number
-        JOIN cameras c ON d.camera_id = c.camera_id
-        WHERE b.status = 'active'
-        ORDER BY d.timestamp DESC
-    """
-    cur = conn.cursor()
-    cur.execute(query)
-    return [dict(row) for row in cur.fetchall()]
-
-
-# ---------------------------------------------------------------------
-# 5. DEMO / SAMPLE USAGE
+# Demo / sample usage
 # ---------------------------------------------------------------------
 
 if __name__ == "__main__":
-    conn = get_connection()
-    create_schema(conn)
+    db = ANPRDatabase()
 
     # --- Sample cameras ---
-    add_camera(conn, "CAM001", "MG Road Junction", 13.0068, 80.2496, "MG Road", "North", "Sector 1")
-    add_camera(conn, "CAM002", "Anna Salai Signal", 13.0524, 80.2508, "Anna Salai", "South", "Sector 2")
-    add_camera(conn, "CAM003", "OMR Toll Gate", 12.8996, 80.2274, "OMR", "East", "Sector 3")
+    db.add_camera("CAM001", "MG Road Junction", 13.0068, 80.2496, "MG Road", "North", "Sector 1")
+    db.add_camera("CAM002", "Anna Salai Signal", 13.0524, 80.2508, "Anna Salai", "South", "Sector 2")
+    db.add_camera("CAM003", "OMR Toll Gate", 12.8996, 80.2274, "OMR", "East", "Sector 3")
 
-    # --- Sample detections (would normally come from your friend's OCR pipeline) ---
-    add_detection(conn, "TN01AB1234", "TN01AB1234", "CAM001",
-                  "2026-09-14 08:15:00", 0.96, "clear")
-    add_detection(conn, "TN01AB1234", "TN01AB1234", "CAM002",
-                  "2026-09-14 08:32:00", 0.89, "angled")
-    add_detection(conn, "TN01AB1234", "TN0lAB1234", "CAM003",   # noisy OCR read example
-                  "2026-09-14 08:50:00", 0.71, "blurred")
-    add_detection(conn, "TN22CD5678", "TN22CD5678", "CAM001",
-                  "2026-09-14 08:20:00", 0.94, "clear")
+    # --- Sample detections ---
+    db.add_detection("TN01AB1234", "TN01AB1234", "CAM001", "2026-09-14 08:15:00", 0.96, "clear")
+    db.add_detection("TN01AB1234", "TN01AB1234", "CAM002", "2026-09-14 08:32:00", 0.89, "angled")
+    db.add_detection("TN01AB1234", "TN0lAB1234", "CAM003", "2026-09-14 08:50:00", 0.71, "blurred")
+    db.add_detection("TN22CD5678", "TN22CD5678", "CAM001", "2026-09-14 08:20:00", 0.94, "clear")
 
-    add_to_blacklist(conn, "TN01AB1234", "Reported stolen")
+    db.add_to_blacklist("TN01AB1234", "Reported stolen")
 
-    # --- Sample queries ---
-    print("\n--- Trajectory for TN01AB1234 ---")
-    for stop in get_plate_trajectory(conn, "TN01AB1234"):
-        print(stop)
-
+    # --- Analytics ---
     print("\n--- Traffic density by camera ---")
-    for row in get_traffic_density_by_camera(conn):
+    for row in db.get_traffic_density_by_camera():
         print(row)
 
     print("\n--- Hourly traffic trend ---")
-    for row in get_hourly_traffic_trend(conn):
+    for row in db.get_hourly_traffic_trend():
         print(row)
 
     print("\n--- Active blacklist alerts ---")
-    for row in get_active_blacklist_alerts(conn):
+    for row in db.get_active_blacklist_alerts():
         print(row)
 
-    # --- Plate Query Engine demo ---
-    engine = PlateQueryEngine(conn)
+    # --- Plate Query Engine ---
+    engine = PlateQueryEngine(db)
     engine.print_report("TN01AB1234")
-    engine.print_report("TN99ZZ0000")  # non-existent plate, to show the "not found" case
+    engine.print_report("TN99ZZ0000")  # not found case
 
-    conn.close()
+    db.close()
