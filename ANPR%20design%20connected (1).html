@@ -1,0 +1,1565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo of Vehicle Detection</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    colors: {
+                        dark: {
+                            900: '#070a12',
+                            800: '#0d1322',
+                            700: '#151d32',
+                            600: '#1e2942',
+                            500: '#2a3859',
+                        },
+                        neon: {
+                            blue: '#00f0ff',
+                            cyan: '#00d8d6',
+                            emerald: '#05c46b',
+                            amber: '#ffdd59',
+                            red: '#ff5e57',
+                            purple: '#a55eea'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #070a12;
+            color: #f1f5f9;
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+
+        /* Glassmorphism Styles */
+        .glass-panel {
+            background: rgba(13, 19, 34, 0.75);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .glass-panel-hover:hover {
+            border-color: rgba(0, 240, 255, 0.3);
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.15);
+            transition: all 0.3s ease;
+        }
+
+        .glass-modal {
+            background: rgba(7, 10, 18, 0.88);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(0, 240, 255, 0.2);
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: rgba(13, 19, 34, 0.5);
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(42, 56, 89, 0.8);
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #00f0ff;
+        }
+
+        /* Pulse Animations */
+        @keyframes radar-sweep {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .animate-radar {
+            animation: radar-sweep 8s linear infinite;
+        }
+
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(1000%); }
+        }
+
+        .scanline-effect::after {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 10px;
+            background: linear-gradient(to bottom, transparent, rgba(0, 240, 255, 0.4), transparent);
+            animation: scanline 4s linear infinite;
+            pointer-events: none;
+        }
+
+        /* License Plate Box Styling */
+        .plate-badge {
+            font-family: 'JetBrains Mono', monospace;
+            background: #f8fafc;
+            color: #0f172a;
+            border: 2px solid #334155;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+
+        /* Custom Glows */
+        .glow-cyan {
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+        }
+        .glow-red {
+            box-shadow: 0 0 15px rgba(255, 94, 87, 0.4);
+        }
+    </style>
+<body class="min-h-screen flex flex-col bg-dark-900 text-slate-100 overflow-x-hidden select-none">
+
+    <!-- Top Global Navigation Bar -->
+    <header class="min-h-[4rem] py-2 border-b border-dark-600/60 glass-panel px-4 flex flex-wrap lg:flex-nowrap items-center justify-between z-30 shrink-0 gap-3">
+        <!-- Logo & Branding -->
+        <div class="flex items-center space-x-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-blue-600 flex items-center justify-center text-dark-900 font-bold text-xl shadow-lg shadow-cyan-500/20 shrink-0">
+                <i class="fa-solid fa-car text-dark-900"></i>
+            </div>
+            <div>
+                <div class="flex items-center space-x-2">
+                    <span class="font-bold text-lg tracking-wider bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 to-blue-400">Demo of Vehicle Detection</span>
+                    <span class="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">v4.2 Live</span>
+                </div>
+                <p class="text-xs text-slate-400">AI-Powered License Plate & Traffic Surveillance Command System</p>
+            </div>
+        </div>
+
+        <!-- Global Search Bar -->
+        <div class="flex items-center relative w-full sm:w-64 lg:w-80 order-3 lg:order-2">
+            <i class="fa-solid fa-magnifying-glass absolute left-3 text-slate-400 text-sm"></i>
+            <input type="text" id="global-search" placeholder="Search Plate (e.g. KBP-505)..." 
+                   onkeyup="handleGlobalSearch(event)"
+                   class="w-full bg-dark-800/80 border border-dark-600 text-slate-200 text-xs rounded-lg pl-9 pr-4 py-2 focus:outline-none focus:border-neon-cyan transition-all">
+            <kbd class="absolute right-3 text-[10px] text-slate-500 bg-dark-700 px-1.5 py-0.5 rounded font-mono hidden sm:inline">Enter ↵</kbd>
+        </div>
+
+        <!-- System Key Stats Badges -->
+        <div class="hidden xl:flex items-center space-x-3 font-mono text-xs order-2 lg:order-3">
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-dark-800 border border-dark-600">
+                <span class="w-2 h-2 rounded-full bg-neon-emerald animate-pulse"></span>
+                <span class="text-slate-400">Cameras:</span>
+                <span class="text-slate-100 font-bold" id="stat-active-cameras">148 Active</span>
+            </div>
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-dark-800 border border-dark-600">
+                <i class="fa-solid fa-car-side text-neon-blue"></i>
+                <span class="text-slate-400">Today:</span>
+                <span class="text-slate-100 font-bold" id="stat-daily-detections">12,450</span>
+            </div>
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-dark-800 border border-dark-600 cursor-pointer hover:border-neon-red transition" onclick="switchView('view-alerts')">
+                <i class="fa-solid fa-triangle-exclamation text-neon-red"></i>
+                <span class="text-slate-400">Alerts:</span>
+                <span class="text-neon-red font-bold" id="stat-active-alerts">3 High</span>
+            </div>
+        </div>
+
+        <!-- View Mode Switcher -->
+        <div class="flex items-center bg-dark-800/90 p-1 rounded-xl border border-dark-600 overflow-x-auto order-4 max-w-full">
+            <button onclick="switchView('view-omniscient')" id="btn-view-omniscient" class="view-btn px-3 py-1.5 rounded-lg text-xs font-medium transition-all flex items-center space-x-1.5 bg-cyan-500/20 text-neon-cyan border border-cyan-500/40 shrink-0">
+                <i class="fa-solid fa-chart-pie"></i>
+                <span>1. Command</span>
+            </button>
+            <button onclick="switchView('view-mosaic')" id="btn-view-mosaic" class="view-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 transition-all flex items-center space-x-1.5 shrink-0">
+                <i class="fa-solid fa-border-all"></i>
+                <span>2. Mosaic Grid</span>
+            </button>
+            <button onclick="switchView('view-alerts')" id="btn-view-alerts" class="view-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 transition-all flex items-center space-x-1.5 shrink-0">
+                <i class="fa-solid fa-bolt"></i>
+                <span>3. Alerts Stream</span>
+            </button>
+            <button onclick="switchView('view-map')" id="btn-view-map" class="view-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 transition-all flex items-center space-x-1.5 shrink-0">
+                <i class="fa-solid fa-map-location-dot"></i>
+                <span>4. Geo Map</span>
+            </button>
+            <button onclick="switchView('view-search')" id="btn-view-search" class="view-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-slate-200 transition-all flex items-center space-x-1.5 shrink-0">
+                <i class="fa-solid fa-database"></i>
+                <span>5. Forensics</span>
+            </button>
+        </div>
+
+        <!-- Time & System Status -->
+        <div class="hidden lg:flex items-center space-x-3 text-xs font-mono order-5">
+            <div class="text-right">
+                <div id="live-clock" class="text-slate-200 font-bold">14:32:01 UTC</div>
+                <div class="text-[10px] text-neon-emerald">SYSTEM ONLINE</div>
+            </div>
+            <div class="w-8 h-8 rounded-full bg-dark-700 border border-dark-500 flex items-center justify-center text-slate-300 cursor-pointer hover:bg-dark-600">
+                <i class="fa-solid fa-user-shield"></i>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Body App Container -->
+    <div class="flex-1 flex overflow-hidden relative">
+
+        <!-- Left Mini Sidebar Navigation -->
+        <aside class="w-16 border-r border-dark-600/60 glass-panel flex flex-col items-center py-4 space-y-6 z-20 shrink-0">
+            <button onclick="switchView('view-omniscient')" title="Dashboard Overview" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-neon-cyan hover:bg-dark-700 transition">
+                <i class="fa-solid fa-house text-lg"></i>
+            </button>
+            <button onclick="switchView('view-mosaic')" title="Camera Matrix Grid" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-neon-cyan hover:bg-dark-700 transition">
+                <i class="fa-solid fa-video text-lg"></i>
+            </button>
+            <button onclick="switchView('view-alerts')" title="Real-Time Detection Stream" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-neon-cyan hover:bg-dark-700 transition">
+                <i class="fa-solid fa-bell text-lg"></i>
+            </button>
+            <button onclick="switchView('view-map')" title="City Geospatial View" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-neon-cyan hover:bg-dark-700 transition">
+                <i class="fa-solid fa-map text-lg"></i>
+            </button>
+            <button onclick="switchView('view-search')" title="Forensic Analytics & Search" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-neon-cyan hover:bg-dark-700 transition">
+                <i class="fa-solid fa-magnifying-glass-chart text-lg"></i>
+            </button>
+            
+            <div class="flex-1"></div>
+
+            <button onclick="toggleAudioAlerts()" id="btn-audio-toggle" title="Toggle Alert Sound" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-neon-amber hover:bg-dark-700 transition">
+                <i class="fa-solid fa-volume-xmark text-lg"></i>
+            </button>
+            <button title="System Settings" class="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-dark-700 transition">
+                <i class="fa-solid fa-gear text-lg"></i>
+            </button>
+        </aside>
+
+        <!-- Content Container Hosting All 5 Design Views -->
+        <main class="flex-1 relative overflow-hidden bg-dark-900">
+
+            <!-- ========================================== -->
+            <!-- DESIGN 1: THE OMNISCIENT COMMAND DASHBOARD -->
+            <!-- ========================================== -->
+            <div id="view-omniscient" class="view-panel active absolute inset-0 p-4 grid grid-cols-12 gap-4 overflow-y-auto">
+                <!-- Left Priority Camera Column -->
+                <div class="col-span-12 lg:col-span-3 flex flex-col space-y-3">
+                    <div class="flex items-center justify-between">
+                        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-neon-cyan animate-pulse"></span>
+                            Priority Live Feeds
+                        </h3>
+                        <span class="text-[10px] text-slate-500 font-mono">12 Active Grid</span>
+                    </div>
+
+                    <div class="flex-1 space-y-2 overflow-y-auto pr-1 max-h-[calc(100vh-140px)]" id="priority-feeds-container">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <!-- Center & Right Area (Map + Stats + Live Table) -->
+                <div class="col-span-12 lg:col-span-9 flex flex-col space-y-4">
+                    <!-- Top KPIs -->
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="glass-panel p-3.5 rounded-xl flex items-center space-x-4">
+                            <div class="w-12 h-12 rounded-lg bg-blue-500/10 border border-blue-500/30 flex items-center justify-center text-neon-blue text-xl">
+                                <i class="fa-solid fa-video"></i>
+                            </div>
+                            <div>
+                                <div class="text-xs text-slate-400 uppercase tracking-wide">Total Node Cameras</div>
+                                <div class="text-2xl font-bold text-slate-100 font-mono">148 <span class="text-xs text-neon-emerald font-normal">Online</span></div>
+                            </div>
+                        </div>
+
+                        <div class="glass-panel p-3.5 rounded-xl flex items-center space-x-4">
+                            <div class="w-12 h-12 rounded-lg bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-neon-cyan text-xl">
+                                <i class="fa-solid fa-bolt"></i>
+                            </div>
+                            <div>
+                                <div class="text-xs text-slate-400 uppercase tracking-wide">Detections Today</div>
+                                <div class="text-2xl font-bold text-slate-100 font-mono" id="dash-kpi-detections">12,450</div>
+                            </div>
+                        </div>
+
+                        <div class="glass-panel p-3.5 rounded-xl flex items-center space-x-4">
+                            <div class="w-12 h-12 rounded-lg bg-red-500/10 border border-red-500/30 flex items-center justify-center text-neon-red text-xl">
+                                <i class="fa-solid fa-triangle-exclamation"></i>
+                            </div>
+                            <div>
+                                <div class="text-xs text-slate-400 uppercase tracking-wide">Active Flagged Vehicles</div>
+                                <div class="text-2xl font-bold text-neon-red font-mono" id="dash-kpi-alerts">3 Critical</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Interactive Vector City Map Canvas Area -->
+                    <div class="glass-panel rounded-xl p-3 flex-1 min-h-[320px] relative overflow-hidden flex flex-col">
+                        <div class="flex items-center justify-between mb-2 z-10">
+                            <div class="flex items-center space-x-2">
+                                <i class="fa-solid fa-map-location text-neon-cyan"></i>
+                                <span class="text-xs font-bold text-slate-200">City Network Traffic Topology</span>
+                            </div>
+                            <div class="flex items-center space-x-2 text-[11px]">
+                                <span class="flex items-center gap-1 text-slate-400"><span class="w-2 h-2 rounded-full bg-neon-cyan"></span> Camera Node</span>
+                                <span class="flex items-center gap-1 text-slate-400"><span class="w-2 h-2 rounded-full bg-neon-red"></span> Violation Alert</span>
+                            </div>
+                        </div>
+
+                        <div class="flex-1 relative w-full h-full rounded-lg bg-dark-900/90 overflow-hidden border border-dark-600" id="canvas-map-wrapper">
+                            <canvas id="city-overview-canvas" class="w-full h-full block cursor-crosshair"></canvas>
+                            <!-- Overlay Map HUD details -->
+                            <div class="absolute bottom-3 left-3 glass-panel px-3 py-1.5 rounded-lg text-[10px] font-mono text-slate-400 pointer-events-none">
+                                GRID: DOWNTOWN SECTOR 4 | RADAR ACTIVE
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Bottom Live Detections Horizontal Carousel/Table -->
+                    <div class="glass-panel rounded-xl p-3 flex flex-col space-y-2">
+                        <div class="flex items-center justify-between">
+                            <h4 class="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+                                <i class="fa-solid fa-list-check text-neon-cyan"></i>
+                                Live Stream Feed Log
+                            </h4>
+                            <span class="text-[10px] text-slate-400 font-mono">Auto-Updating Live</span>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left text-xs font-mono">
+                                <thead class="bg-dark-800 text-slate-400 uppercase text-[10px] border-b border-dark-600">
+                                    <tr>
+                                        <th class="py-2 px-3">Timestamp</th>
+                                        <th class="py-2 px-3">Plate ID</th>
+                                        <th class="py-2 px-3">Camera Node</th>
+                                        <th class="py-2 px-3">AI Confidence</th>
+                                        <th class="py-2 px-3">Status</th>
+                                        <th class="py-2 px-3 text-right">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="omniscient-table-body" class="divide-y divide-dark-700">
+                                    <!-- Dynamic Rows -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- DESIGN 2: THE MOSAIC WALL (16 CAMERA GRID) -->
+            <!-- ========================================== -->
+            <div id="view-mosaic" class="view-panel hidden absolute inset-0 p-4 flex flex-col space-y-3">
+                <!-- Mosaic Controls Header -->
+                <div class="glass-panel p-2.5 rounded-xl flex items-center justify-between shrink-0">
+                    <div class="flex items-center space-x-3">
+                        <span class="text-xs font-bold text-slate-200 uppercase tracking-wider flex items-center gap-2">
+                            <i class="fa-solid fa-grid-2 text-neon-cyan"></i> 16-Camera Matrix Monitoring
+                        </span>
+                        <span class="text-[11px] bg-cyan-500/10 text-neon-cyan border border-cyan-500/30 px-2 py-0.5 rounded font-mono">60 FPS Render</span>
+                    </div>
+
+                    <div class="flex items-center space-x-2 text-xs">
+                        <button onclick="filterMosaicGrid('all')" class="px-2.5 py-1 rounded bg-dark-700 hover:bg-dark-600 text-slate-200">All Nodes</button>
+                        <button onclick="filterMosaicGrid('downtown')" class="px-2.5 py-1 rounded bg-dark-700 hover:bg-dark-600 text-slate-400">Downtown</button>
+                        <button onclick="filterMosaicGrid('highway')" class="px-2.5 py-1 rounded bg-dark-700 hover:bg-dark-600 text-slate-400">Highways</button>
+                    </div>
+                </div>
+
+                <!-- 4x4 Responsive Grid Canvas Viewports -->
+                <div class="flex-1 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 overflow-y-auto" id="mosaic-grid-container">
+                    <!-- Generated Dynamically via Javascript -->
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- DESIGN 3: ALERT-CENTRIC EVENT STREAM       -->
+            <!-- ========================================== -->
+            <div id="view-alerts" class="view-panel hidden absolute inset-0 p-4 grid grid-cols-12 gap-4">
+                <!-- Main Featured Center Video Feed -->
+                <div class="col-span-12 lg:col-span-8 flex flex-col space-y-3">
+                    <div class="glass-panel rounded-xl p-3 flex-1 flex flex-col relative overflow-hidden border border-cyan-500/20">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2">
+                                <span class="w-3 h-3 rounded-full bg-neon-red animate-ping"></span>
+                                <span class="text-xs font-bold text-slate-200">Featured High-Volume Intersection: Cam 07 - Downtown Hub</span>
+                            </div>
+                            <span class="text-xs font-mono text-neon-cyan bg-cyan-500/10 px-2 py-0.5 rounded border border-cyan-500/30">AI Active Detection</span>
+                        </div>
+
+                        <!-- Canvas Simulated Video Feed -->
+                        <div class="flex-1 relative rounded-lg bg-black overflow-hidden scanline-effect" id="featured-video-container">
+                            <canvas id="featured-cam-canvas" class="w-full h-full block"></canvas>
+                            
+                            <!-- Bounding Box HUD Overlays dynamically rendered -->
+                            <div class="absolute bottom-4 left-4 glass-panel p-3 rounded-lg max-w-sm font-mono text-xs space-y-1">
+                                <div class="text-slate-400 text-[10px] uppercase">Live Terminal Telemetry Log</div>
+                                <div class="text-neon-emerald text-[11px]" id="cam-telemetry-log">> Analyzing lane vectors... [OK]</div>
+                                <div class="text-slate-300 text-[11px]" id="cam-telemetry-plate">> OCR Target Locked: <span class="text-neon-cyan font-bold">KBP 505</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Alert Stream Panel -->
+                <div class="col-span-12 lg:col-span-4 glass-panel rounded-xl p-3 flex flex-col space-y-3 overflow-hidden">
+                    <div class="flex items-center justify-between border-b border-dark-600 pb-2">
+                        <div class="flex items-center space-x-2">
+                            <i class="fa-solid fa-bell text-neon-red animate-bounce"></i>
+                            <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200">Live Alert Stream</h3>
+                        </div>
+                        <span class="text-[10px] bg-red-500/20 text-neon-red border border-red-500/40 px-2 py-0.5 rounded font-mono" id="alert-counter-badge">3 Unresolved</span>
+                    </div>
+
+                    <!-- Scrolling Realtime Cards Feed -->
+                    <div class="flex-1 overflow-y-auto space-y-2.5 pr-1" id="alerts-stream-cards">
+                        <!-- Populated dynamically with alerts -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- DESIGN 4: INTERACTIVE MAP & POPUP VIEW     -->
+            <!-- ========================================== -->
+            <div id="view-map" class="view-panel hidden absolute inset-0 relative overflow-hidden">
+                <!-- Map full viewport canvas -->
+                <canvas id="fullscreen-geo-map" class="w-full h-full block cursor-grab active:cursor-grabbing bg-dark-900"></canvas>
+
+                <!-- Map Floating Control HUD -->
+                <div class="absolute top-4 left-4 glass-panel p-3.5 rounded-xl max-w-sm space-y-3 z-10 border border-cyan-500/30">
+                    <div class="flex items-center justify-between">
+                        <h4 class="text-xs font-bold text-slate-100 flex items-center gap-2">
+                            <i class="fa-solid fa-earth-americas text-neon-cyan animate-pulse"></i> City Live GPS Tracking Map
+                        </h4>
+                        <span class="text-[9px] bg-cyan-500/20 text-neon-cyan border border-cyan-500/40 px-1.5 py-0.5 rounded font-mono">REAL-TIME TELEMETRY</span>
+                    </div>
+                    <p class="text-[11px] text-slate-400">Track active vehicles, live measured speeds vs. assumed limit speeds, and camera nodes across city sectors.</p>
+                    
+                    <!-- Live Speed Summary Badges -->
+                    <div class="grid grid-cols-3 gap-2 text-center font-mono">
+                        <div class="bg-dark-800/90 p-1.5 rounded border border-dark-600">
+                            <div class="text-[9px] text-slate-400 uppercase">Active Units</div>
+                            <div class="text-sm font-bold text-neon-cyan" id="hud-tracked-count">5 Live</div>
+                        </div>
+                        <div class="bg-dark-800/90 p-1.5 rounded border border-dark-600">
+                            <div class="text-[9px] text-slate-400 uppercase">Over-Speed</div>
+                            <div class="text-sm font-bold text-neon-red" id="hud-overspeed-count">3 Alert</div>
+                        </div>
+                        <div class="bg-dark-800/90 p-1.5 rounded border border-dark-600">
+                            <div class="text-[9px] text-slate-400 uppercase">Avg Fleet Speed</div>
+                            <div class="text-sm font-bold text-neon-amber" id="hud-avg-speed">62 km/h</div>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center space-x-2">
+                        <button onclick="resetMapZoom()" class="px-2 py-1 text-[10px] bg-dark-700 hover:bg-dark-600 rounded text-slate-200 font-mono flex items-center gap-1">
+                            <i class="fa-solid fa-arrows-to-dot text-neon-cyan"></i> Reset View
+                        </button>
+                        <button onclick="toggleHeatmapOverlay()" class="px-2 py-1 text-[10px] bg-cyan-500/20 text-neon-cyan border border-cyan-500/30 rounded font-mono flex items-center gap-1">
+                            <i class="fa-solid fa-fire text-neon-amber"></i> Density Heatmap
+                        </button>
+                    </div>
+
+                    <!-- Map Legend -->
+                    <div class="pt-2 border-t border-dark-600/80 text-[10px] font-mono space-y-1">
+                        <div class="text-slate-400 uppercase tracking-wide">Telemetry Legend:</div>
+                        <div class="grid grid-cols-2 gap-1 text-slate-300">
+                            <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-neon-cyan"></span> Normal (Speed &lt; Limit)</span>
+                            <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-neon-red"></span> Speeding / Flagged</span>
+                            <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-neon-amber"></span> Assumed Limit Target</span>
+                            <span class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-emerald-400"></span> ANPR Camera Node</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Floating Interactive Modal Popup for Map Node or Vehicle Inspection -->
+                <div id="map-node-modal" class="hidden absolute top-12 right-6 w-96 glass-modal rounded-xl border border-cyan-500/30 p-4 shadow-2xl z-20 space-y-3 animate-fade-in">
+                    <div class="flex items-center justify-between border-b border-dark-600 pb-2">
+                        <div class="flex items-center space-x-2">
+                            <span class="w-2.5 h-2.5 rounded-full bg-neon-emerald animate-ping" id="modal-status-dot"></span>
+                            <h3 class="text-xs font-bold text-slate-100 font-mono" id="modal-node-title">Target Vehicle Telemetry</h3>
+                        </div>
+                        <button onclick="closeMapModal()" class="text-slate-400 hover:text-slate-100 text-sm">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+
+                    <!-- Live Vehicle Speed Telemetry Banner -->
+                    <div class="bg-dark-800/90 rounded-lg p-3 border border-dark-600 space-y-2">
+                        <div class="flex items-center justify-between font-mono">
+                            <div>
+                                <div class="text-[10px] text-slate-400 uppercase">License Plate ID</div>
+                                <div class="plate-badge px-2 py-0.5 text-base font-bold text-slate-900 mt-0.5" id="modal-vehicle-plate">KBP-505</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-[10px] text-slate-400 uppercase">Status</div>
+                                <span class="px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-neon-red font-mono border border-red-500/40 font-bold" id="modal-vehicle-status">SPEEDING ALERT</span>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-2 pt-2 border-t border-dark-700 text-xs font-mono">
+                            <div class="bg-dark-900/80 p-2 rounded border border-dark-600">
+                                <div class="text-[10px] text-slate-400">Live Measured Speed</div>
+                                <div class="text-neon-red text-lg font-bold flex items-center gap-1" id="modal-live-speed">
+                                    78 <span class="text-xs text-slate-400 font-normal">km/h</span>
+                                </div>
+                            </div>
+                            <div class="bg-dark-900/80 p-2 rounded border border-dark-600">
+                                <div class="text-[10px] text-slate-400">Assumed Limit Speed</div>
+                                <div class="text-neon-cyan text-lg font-bold flex items-center gap-1" id="modal-assumed-speed">
+                                    55 <span class="text-xs text-slate-400 font-normal">km/h</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="text-[11px] font-mono text-slate-300 flex justify-between bg-dark-900/40 p-1.5 rounded border border-dark-700">
+                            <span>Speed Delta: <strong class="text-neon-red" id="modal-speed-delta">+23 km/h (+41.8%)</strong></span>
+                            <span class="text-slate-400" id="modal-vector-heading">Heading: NE 45°</span>
+                        </div>
+                    </div>
+
+                    <!-- Mini Live Canvas Preview -->
+                    <div class="h-36 bg-black rounded-lg relative overflow-hidden border border-dark-600">
+                        <canvas id="modal-node-canvas" class="w-full h-full block"></canvas>
+                        <div class="absolute top-2 left-2 bg-dark-900/80 text-neon-cyan px-2 py-0.5 rounded text-[10px] font-mono">TRACKING FEED</div>
+                    </div>
+
+                    <div>
+                        <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-1">Recent Sensor Detections</div>
+                        <div class="space-y-1.5" id="modal-recent-plates">
+                            <!-- Dynamically generated list -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ========================================== -->
+            <!-- DESIGN 5: SEARCH & FORENSICS CENTER        -->
+            <!-- ========================================== -->
+            <div id="view-search" class="view-panel hidden absolute inset-0 p-4 grid grid-cols-12 gap-4 overflow-y-auto">
+                <!-- Left Search & Filter Sidebar -->
+                <div class="col-span-12 lg:col-span-3 glass-panel rounded-xl p-4 space-y-4">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                        <i class="fa-solid fa-filter text-neon-cyan"></i> Forensic Search Filters
+                    </h3>
+
+                    <div class="space-y-3 text-xs">
+                        <div>
+                            <label class="block text-slate-400 mb-1">License Plate Number</label>
+                            <input type="text" id="filter-plate" placeholder="e.g. PRT-7028" class="w-full bg-dark-800 border border-dark-600 rounded p-2 text-slate-100 focus:outline-none focus:border-neon-cyan font-mono">
+                        </div>
+
+                        <div>
+                            <label class="block text-slate-400 mb-1">Date Range</label>
+                            <div class="grid grid-cols-2 gap-2">
+                                <input type="date" value="2026-09-10" class="bg-dark-800 border border-dark-600 rounded p-1.5 text-slate-200 text-[11px]">
+                                <input type="date" value="2026-09-14" class="bg-dark-800 border border-dark-600 rounded p-1.5 text-slate-200 text-[11px]">
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-slate-400 mb-1">Camera Location / Sector</label>
+                            <select id="filter-location" class="w-full bg-dark-800 border border-dark-600 rounded p-2 text-slate-200">
+                                <option value="all">All City Sectors</option>
+                                <option value="Main & 5th Ave">Main & 5th Ave</option>
+                                <option value="Civic Center">Civic Center</option>
+                                <option value="North Highway Exit">North Highway Exit</option>
+                                <option value="Downtown Hub">Downtown Hub</option>
+                            </select>
+                        </div>
+
+                        <div>
+                            <label class="block text-slate-400 mb-1">Vehicle Color</label>
+                            <div class="grid grid-cols-3 gap-1.5">
+                                <button onclick="selectColorFilter(this, 'all')" class="color-filter-btn border border-neon-cyan bg-cyan-500/20 text-neon-cyan p-1 rounded text-[10px]">All</button>
+                                <button onclick="selectColorFilter(this, 'Black')" class="color-filter-btn border border-dark-600 bg-dark-800 text-slate-300 p-1 rounded text-[10px]">Black</button>
+                                <button onclick="selectColorFilter(this, 'White')" class="color-filter-btn border border-dark-600 bg-dark-800 text-slate-300 p-1 rounded text-[10px]">White</button>
+                                <button onclick="selectColorFilter(this, 'Red')" class="color-filter-btn border border-dark-600 bg-dark-800 text-slate-300 p-1 rounded text-[10px]">Red</button>
+                                <button onclick="selectColorFilter(this, 'Blue')" class="color-filter-btn border border-dark-600 bg-dark-800 text-slate-300 p-1 rounded text-[10px]">Blue</button>
+                                <button onclick="selectColorFilter(this, 'Silver')" class="color-filter-btn border border-dark-600 bg-dark-800 text-slate-300 p-1 rounded text-[10px]">Silver</button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-slate-400 mb-1">Violation Status</label>
+                            <select id="filter-violation" class="w-full bg-dark-800 border border-dark-600 rounded p-2 text-slate-200">
+                                <option value="all">All Records</option>
+                                <option value="Flagged">Flagged / Stolen</option>
+                                <option value="Speeding">Speeding Violation</option>
+                                <option value="Red Light">Red Light Run</option>
+                                <option value="Expired">Expired Registration</option>
+                                <option value="Normal">Normal Traffic</option>
+                            </select>
+                        </div>
+
+                        <button onclick="applyForensicFilters()" class="w-full bg-gradient-to-r from-cyan-500 to-blue-600 text-dark-900 font-bold py-2 rounded-lg hover:brightness-110 transition mt-2">
+                            <i class="fa-solid fa-magnifying-glass"></i> Search Database
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Center Forensic Results Table -->
+        <div class="col-span-12 lg:col-span-6 glass-panel rounded-xl p-4 flex flex-col space-y-3">
+            <div class="flex items-center justify-between">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200">
+                    Search Results Log (<span id="results-count" class="text-neon-cyan">0</span> entries)
+                </h3>
+                <button onclick="exportTableCSV()" class="text-xs text-slate-400 hover:text-slate-100 flex items-center gap-1 bg-dark-800 hover:bg-dark-700 px-2.5 py-1 rounded border border-dark-600 transition">
+                    <i class="fa-solid fa-file-csv text-neon-cyan"></i> Export CSV
+                </button>
+            </div>
+
+            <div class="flex-1 overflow-y-auto border border-dark-600 rounded-lg">
+                        <table class="w-full text-left text-xs font-mono">
+                            <thead class="bg-dark-800 text-slate-400 uppercase text-[10px] border-b border-dark-600 sticky top-0">
+                                <tr>
+                                    <th class="py-2.5 px-3">Timestamp</th>
+                                    <th class="py-2.5 px-3">Detected Plate</th>
+                                    <th class="py-2.5 px-3">Camera Node</th>
+                                    <th class="py-2.5 px-3">AI Score</th>
+                                    <th class="py-2.5 px-3">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="forensics-table-body" class="divide-y divide-dark-700">
+                                <!-- Generated JS Rows -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Right Selected Vehicle Profile Pane -->
+                <div class="col-span-12 lg:col-span-3 glass-panel rounded-xl p-4 space-y-4">
+                    <h3 class="text-xs font-bold uppercase tracking-wider text-slate-200 flex items-center gap-2">
+                        <i class="fa-solid fa-id-card text-neon-cyan"></i> Vehicle Target Profile
+                    </h3>
+
+                    <div id="vehicle-profile-card" class="space-y-3">
+                        <div class="p-3 bg-dark-800 rounded-lg border border-dark-600 text-center">
+                            <div class="text-[10px] text-slate-400 uppercase">Selected License Plate</div>
+                            <div id="profile-plate-number" class="text-xl font-bold text-slate-100 font-mono my-1">PRT-7317</div>
+                            <span id="profile-status-badge" class="px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-neon-red font-mono border border-red-500/30">FLAGGED VEHICLE</span>
+                        </div>
+
+                        <div class="space-y-2 text-xs font-mono">
+                            <div class="flex justify-between border-b border-dark-700 pb-1">
+                                <span class="text-slate-400">Vehicle Make:</span>
+                                <span id="profile-make" class="text-slate-200">Sedan (Silver)</span>
+                            </div>
+                            <div class="flex justify-between border-b border-dark-700 pb-1">
+                                <span class="text-slate-400">First Detection:</span>
+                                <span id="profile-first" class="text-slate-200">14:28:10</span>
+                            </div>
+                            <div class="flex justify-between border-b border-dark-700 pb-1">
+                                <span class="text-slate-400">Last Sector:</span>
+                                <span id="profile-last-sector" class="text-slate-200">Main & 5th Ave</span>
+                            </div>
+                            <div class="flex justify-between border-b border-dark-700 pb-1">
+                                <span class="text-slate-400">Confidence Avg:</span>
+                                <span id="profile-confidence" class="text-neon-emerald font-bold">98.4%</span>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div class="text-[11px] font-bold text-slate-400 uppercase tracking-wide mb-2">Historical Frequency Timeline</div>
+                            <div class="grid grid-cols-7 gap-1" id="profile-heatmap-timeline">
+                                <!-- Dynamically generated heatmap squares -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- Application Logic & Engine Script -->
+    <script>
+        /* Global Data State */
+        const CAMERAS = [];
+
+        // Dynamic Moving Vehicles with Live Speed & Assumed Speed Telemetry
+        let trackedVehicles = [
+            { id: 'V-101', plate: 'KBP-505', color: '#ff5e57', liveSpeed: 78, assumedSpeed: 50, progress: 0.1, speedStep: 0.0012, status: 'Speeding', route: [{x: 0.12, y: 0.15}, {x: 0.45, y: 0.48}, {x: 0.88, y: 0.82}] },
+            { id: 'V-102', plate: 'XYZ-7890', color: '#00f0ff', liveSpeed: 44, assumedSpeed: 50, progress: 0.35, speedStep: 0.0008, status: 'Normal', route: [{x: 0.15, y: 0.82}, {x: 0.50, y: 0.50}, {x: 0.85, y: 0.18}] },
+            { id: 'V-103', plate: 'PRT-7028', color: '#ffdd59', liveSpeed: 68, assumedSpeed: 50, progress: 0.60, speedStep: 0.0011, status: 'Speeding', route: [{x: 0.08, y: 0.50}, {x: 0.92, y: 0.50}] },
+            { id: 'V-104', plate: 'PRT-7323', color: '#00f0ff', liveSpeed: 48, assumedSpeed: 60, progress: 0.22, speedStep: 0.0007, status: 'Normal', route: [{x: 0.50, y: 0.08}, {x: 0.50, y: 0.92}] },
+            { id: 'V-105', plate: 'LEX-9012', color: '#ff5e57', liveSpeed: 89, assumedSpeed: 60, progress: 0.78, speedStep: 0.0014, status: 'Flagged', route: [{x: 0.88, y: 0.12}, {x: 0.12, y: 0.88}] }
+        ];
+
+        const SAMPLE_PLATES = [
+            'KBP-505', 'XYZ-7890', 'PRT-7028', 'PRT-7323', 'PRT-7376', 
+            'ABC-1234', 'LEX-9012', 'MKT-4410', 'STN-8821', 'FLG-9901'
+        ];
+
+        const VEHICLE_TYPES = ['Sedan (Black)', 'SUV (White)', 'Truck (Red)', 'Sedan (Silver)', 'Coupe (Blue)'];
+
+        let detectionDatabase = [];
+        let activeAlerts = [];
+        let dailyDetectionsCount = 12450;
+        let audioAlertEnabled = false;
+        let showHeatmap = false;
+        let selectedColorFilterVal = 'all';
+        let audioCtx = null;
+
+        window.onload = async function() {
+            initClock();
+            renderMosaicGrid();
+            initCityMapCanvas();
+            initFeaturedCamCanvas();
+            initGeoFullscreenMap();
+            await loadDashboardData();
+
+            // Refresh real database data instead of generating fake detections.
+            setInterval(loadDashboardData, 5000);
+
+            window.addEventListener('resize', () => {
+                renderPriorityFeeds();
+                renderMosaicGrid();
+            });
+        };
+
+        // Switch active View Design reliably
+        function switchView(viewId) {
+            document.querySelectorAll('.view-panel').forEach(panel => {
+                panel.classList.add('hidden');
+                panel.classList.remove('active');
+            });
+
+            document.querySelectorAll('.view-btn').forEach(btn => {
+                btn.classList.remove('bg-cyan-500/20', 'text-neon-cyan', 'border', 'border-cyan-500/40');
+                btn.classList.add('text-slate-400');
+            });
+
+            const selectedView = document.getElementById(viewId);
+            if (selectedView) {
+                selectedView.classList.remove('hidden');
+                selectedView.classList.add('active');
+            }
+
+            const activeBtn = document.getElementById('btn-' + viewId);
+            if (activeBtn) {
+                activeBtn.classList.add('bg-cyan-500/20', 'text-neon-cyan', 'border', 'border-cyan-500/40');
+                activeBtn.classList.remove('text-slate-400');
+            }
+
+            // Force canvas resize trigger for dynamic renders
+            window.dispatchEvent(new Event('resize'));
+        }
+
+        // Global Search Input Handler
+        function handleGlobalSearch(event) {
+            const query = event.target.value.trim().toUpperCase();
+            if (event.key === 'Enter' || query.length >= 3) {
+                switchView('view-search');
+                document.getElementById('filter-plate').value = query;
+                applyForensicFilters();
+            }
+        }
+
+        // Open Modal for Vehicle Speed Telemetry
+        function openVehicleModal(veh) {
+            const modal = document.getElementById('map-node-modal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+
+            const isOverLimit = veh.liveSpeed > veh.assumedSpeed;
+            const delta = veh.liveSpeed - veh.assumedSpeed;
+
+            document.getElementById('modal-node-title').innerText = `Vehicle Tracking Target (${veh.id})`;
+            document.getElementById('modal-vehicle-plate').innerText = veh.plate;
+            
+            const statusBadge = document.getElementById('modal-vehicle-status');
+            if (isOverLimit) {
+                statusBadge.innerText = 'OVER-SPEED ALERT';
+                statusBadge.className = 'px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-neon-red font-mono border border-red-500/40 font-bold animate-pulse';
+            } else {
+                statusBadge.innerText = 'NORMAL TRAFFIC';
+                statusBadge.className = 'px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-neon-emerald font-mono border border-emerald-500/40 font-bold';
+            }
+
+            document.getElementById('modal-live-speed').innerHTML = `${veh.liveSpeed} <span class="text-xs text-slate-400 font-normal">km/h</span>`;
+            document.getElementById('modal-assumed-speed').innerHTML = `${veh.assumedSpeed} <span class="text-xs text-slate-400 font-normal">km/h</span>`;
+
+            const speedDeltaEl = document.getElementById('modal-speed-delta');
+            if (delta > 0) {
+                speedDeltaEl.innerText = `+${delta} km/h (+${((delta/veh.assumedSpeed)*100).toFixed(1)}%)`;
+                speedDeltaEl.className = 'text-neon-red font-bold';
+            } else {
+                speedDeltaEl.innerText = `${delta} km/h (Within Limit)`;
+                speedDeltaEl.className = 'text-neon-emerald font-bold';
+            }
+
+            document.getElementById('modal-vector-heading').innerText = `Heading: Vector Path ${veh.id}`;
+            drawMiniCanvas('modal-node-canvas');
+        }
+
+        function openCameraModal(cam) {
+            const modal = document.getElementById('map-node-modal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+
+            document.getElementById('modal-node-title').innerText = `${cam.id}: ${cam.name}`;
+            document.getElementById('modal-vehicle-plate').innerText = SAMPLE_PLATES[0];
+            document.getElementById('modal-vehicle-status').innerText = 'CAMERA NODE ONLINE';
+            document.getElementById('modal-live-speed').innerHTML = `58 <span class="text-xs text-slate-400 font-normal">km/h (Avg)</span>`;
+            document.getElementById('modal-assumed-speed').innerHTML = `50 <span class="text-xs text-slate-400 font-normal">km/h (Limit)</span>`;
+            document.getElementById('modal-speed-delta').innerText = `+8 km/h Sector Flow`;
+            document.getElementById('modal-speed-delta').className = 'text-neon-amber font-bold';
+
+            drawMiniCanvas('modal-node-canvas');
+        }
+
+        function closeMapModal() {
+            const modal = document.getElementById('map-node-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        function resetMapZoom() {
+            showToast('Geo Map View Reset to Centered Telemetry');
+        }
+
+        function toggleHeatmapOverlay() {
+            showHeatmap = !showHeatmap;
+            showToast(showHeatmap ? 'Traffic Density Heatmap: ENABLED' : 'Traffic Density Heatmap: DISABLED');
+        }
+
+        // Live Clock Updates
+        function initClock() {
+            setInterval(() => {
+                const now = new Date();
+                document.getElementById('live-clock').innerText = now.toTimeString().split(' ')[0] + ' UTC';
+            }, 1000);
+        }
+
+        // ================= REAL BACKEND CONNECTION =================
+        async function apiGet(url) {
+            const response = await fetch(url, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`API ${response.status}`);
+            return response.json();
+        }
+
+        function normalizeCamera(cam, index) {
+            // The DB intentionally stores no map coordinates. These positions are
+            // only visual dashboard positions; identity/location comes from SQLite.
+            return {
+                id: cam.camera_id,
+                name: cam.location_name,
+                road: cam.road_name || '',
+                sector: cam.location_name,
+                x: 80 + (index % 4) * 190,
+                y: 80 + Math.floor(index / 4) * 150,
+                status: 'Active'
+            };
+        }
+
+        function normalizeDetection(r) {
+            const confidence = r.confidence_score == null ? '' : `${(Number(r.confidence_score) * 100).toFixed(1)}%`;
+            return {
+                id: `DET-${r.detection_id}`,
+                timestamp: r.timestamp,
+                plate: r.plate_number,
+                camera: r.location_name || r.camera_id,
+                camera_id: r.camera_id,
+                confidence,
+                status: r.blacklist_status === 'active' ? 'Flagged' : 'Normal',
+                vehicle: 'Vehicle'
+            };
+        }
+
+        async function loadDashboardData() {
+            try {
+                const data = await apiGet('/api/dashboard');
+
+                CAMERAS.length = 0;
+                data.cameras.forEach((cam, i) => CAMERAS.push(normalizeCamera(cam, i)));
+
+                detectionDatabase = data.detections.map(normalizeDetection);
+                activeAlerts = detectionDatabase.filter(r => r.status === 'Flagged');
+                dailyDetectionsCount = data.today_detections;
+
+                updateDashboardStats(data);
+                renderPriorityFeeds();
+                renderMosaicGrid();
+                updateAlertCards();
+                updateOmniscientTable();
+                populateForensicsTable(detectionDatabase);
+            } catch (error) {
+                console.error('Backend connection failed:', error);
+                showToast('Backend/database connection failed. Start app.py.', true);
+            }
+        }
+
+        function updateDashboardStats(data) {
+            const active = document.getElementById('stat-active-cameras');
+            if (active) active.innerText = `${data.camera_count} Active`;
+            const daily = document.getElementById('stat-daily-detections');
+            if (daily) daily.innerText = Number(data.today_detections).toLocaleString();
+            const dash = document.getElementById('dash-kpi-detections');
+            if (dash) dash.innerText = Number(data.today_detections).toLocaleString();
+            const alerts = document.getElementById('stat-active-alerts');
+            if (alerts) alerts.innerText = `${data.active_alerts} High`;
+            const kpi = document.getElementById('dash-kpi-alerts');
+            if (kpi) kpi.innerText = `${data.active_alerts} Critical`;
+        }
+
+        function renderPriorityFeeds() {
+            const container = document.getElementById('priority-feeds-container');
+            if (!container) return;
+            container.innerHTML = '';
+
+            CAMERAS.forEach((cam, idx) => {
+                const feed = document.createElement('div');
+                feed.className = 'glass-panel p-2 rounded-lg glass-panel-hover cursor-pointer relative overflow-hidden';
+                feed.onclick = () => showToast(`Selected Camera: ${cam.name} (${cam.id})`);
+
+                feed.innerHTML = `
+                    <div class="relative h-24 bg-slate-900 rounded overflow-hidden mb-1.5 border border-dark-600">
+                        <canvas id="thumb-canvas-${idx}" class="w-full h-full block"></canvas>
+                        <span class="absolute top-1 left-1 bg-red-600 text-white text-[9px] px-1 rounded font-mono font-bold">LIVE</span>
+                        <span class="absolute bottom-1 right-1 bg-dark-900/80 text-neon-cyan text-[9px] px-1 rounded font-mono">${cam.id}</span>
+                    </div>
+                    <div class="flex justify-between items-center text-xs">
+                        <span class="font-bold text-slate-200 truncate">${cam.name}</span>
+                        <span class="text-[10px] text-neon-emerald font-mono">99.8%</span>
+                    </div>
+                `;
+                container.appendChild(feed);
+                setTimeout(() => drawMiniCanvas(`thumb-canvas-${idx}`), 50);
+            });
+        }
+
+        function updateOmniscientTable() {
+            const tbody = document.getElementById('omniscient-table-body');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+
+            detectionDatabase.slice(0, 6).forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-dark-700/50 transition';
+
+                const statusBadge = item.status === 'Flagged' 
+                    ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-neon-red border border-red-500/30">FLAGGED</span>`
+                    : item.status === 'Speeding'
+                    ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-neon-amber border border-amber-500/30">SPEEDING</span>`
+                    : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-neon-emerald border border-emerald-500/30">NORMAL</span>`;
+
+                tr.innerHTML = `
+                    <td class="py-2 px-3 text-slate-400">${item.timestamp}</td>
+                    <td class="py-2 px-3 font-bold text-neon-cyan"><span class="plate-badge px-1.5 py-0.5">${item.plate}</span></td>
+                    <td class="py-2 px-3 text-slate-300">${item.camera}</td>
+                    <td class="py-2 px-3 text-slate-300">${item.confidence}</td>
+                    <td class="py-2 px-3">${statusBadge}</td>
+                    <td class="py-2 px-3 text-right">
+                        <button onclick="inspectPlate('${item.plate}')" class="text-xs text-neon-cyan hover:underline">Inspect</button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderMosaicGrid(filterGroup = 'all') {
+            const container = document.getElementById('mosaic-grid-container');
+            if (!container) return;
+            container.innerHTML = '';
+
+            for (let i = 1; i <= 16; i++) {
+                const camId = `CAM-${i < 10 ? '0' + i : i}`;
+                const sectorTag = i % 3 === 0 ? 'Highway' : i % 2 === 0 ? 'Downtown' : 'Central';
+
+                if (filterGroup !== 'all' && sectorTag.toLowerCase() !== filterGroup.toLowerCase()) {
+                    continue;
+                }
+
+                const tile = document.createElement('div');
+                tile.className = 'glass-panel rounded-xl p-2 flex flex-col justify-between border border-dark-600 hover:border-cyan-500/50 transition relative overflow-hidden group min-h-[160px]';
+
+                tile.innerHTML = `
+                    <div class="flex justify-between items-center z-10 text-[11px] font-mono mb-1">
+                        <span class="text-slate-200 font-bold">${camId}: ${sectorTag}</span>
+                        <span class="bg-emerald-500/20 text-neon-emerald px-1.5 py-0.5 rounded text-[9px]">ONLINE</span>
+                    </div>
+                    <div class="relative flex-1 bg-black rounded overflow-hidden scanline-effect border border-dark-700 min-h-[100px]">
+                        <canvas id="mosaic-canvas-${i}" class="w-full h-full block"></canvas>
+                        <div class="absolute bottom-1 left-1 bg-dark-900/90 border border-slate-700 text-slate-200 px-1.5 py-0.5 rounded text-[10px] font-mono">
+                            DETECTED: <span class="text-neon-cyan font-bold">${SAMPLE_PLATES[i % SAMPLE_PLATES.length]}</span>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(tile);
+                setTimeout(() => drawMiniCanvas(`mosaic-canvas-${i}`), 50);
+            }
+        }
+
+        function filterMosaicGrid(sector) {
+            showToast(`Filtering Mosaic Grid: ${sector.toUpperCase()}`);
+            renderMosaicGrid(sector);
+        }
+
+        function updateAlertCards() {
+            const container = document.getElementById('alerts-stream-cards');
+            if (!container) return;
+            container.innerHTML = '';
+
+            activeAlerts.forEach((alert) => {
+                const card = document.createElement('div');
+                const isRed = alert.status === 'Flagged';
+                card.className = `glass-panel p-3 rounded-xl border ${isRed ? 'border-red-500/40 bg-red-950/10' : 'border-amber-500/40 bg-amber-950/10'} hover:scale-[1.01] transition cursor-pointer`;
+                card.onclick = () => inspectPlate(alert.plate);
+
+                card.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="plate-badge px-2 py-0.5 text-sm">${alert.plate}</span>
+                        <span class="text-[10px] font-mono ${isRed ? 'bg-red-500/20 text-neon-red' : 'bg-amber-500/20 text-neon-amber'} px-2 py-0.5 rounded border border-current">
+                            ${alert.status.toUpperCase()}
+                        </span>
+                    </div>
+                    <div class="text-xs space-y-1 font-mono">
+                        <div class="text-slate-300"><i class="fa-solid fa-location-dot text-slate-500 mr-1"></i>${alert.camera}</div>
+                        <div class="flex justify-between text-slate-400 text-[11px]">
+                            <span>Time: ${alert.timestamp}</span>
+                            <span class="text-neon-cyan">AI: ${alert.confidence}</span>
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            const badge = document.getElementById('alert-counter-badge');
+            if (badge) badge.innerText = `${activeAlerts.length} Unresolved`;
+            const kpi = document.getElementById('dash-kpi-alerts');
+            if (kpi) kpi.innerText = `${activeAlerts.length} Critical`;
+        }
+
+        function drawMiniCanvas(canvasId) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            canvas.width = canvas.clientWidth || 200;
+            canvas.height = canvas.clientHeight || 100;
+
+            // Draw Road layout
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Road Lines
+            ctx.strokeStyle = '#334155';
+            ctx.setLineDash([6, 6]);
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2, 0);
+            ctx.lineTo(canvas.width / 2, canvas.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Draw Simulated Car Box
+            const carX = canvas.width * 0.35;
+            const carY = canvas.height * 0.3;
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(carX, carY, Math.min(40, canvas.width * 0.4), Math.min(25, canvas.height * 0.4));
+
+            // Bounding box around plate
+            ctx.strokeStyle = '#00f0ff';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(carX + 5, carY + 5, 20, 10);
+        }
+
+        function initFeaturedCamCanvas() {
+            const canvas = document.getElementById('featured-cam-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            function renderLoop() {
+                canvas.width = canvas.clientWidth || 600;
+                canvas.height = canvas.clientHeight || 400;
+
+                // Dark Asphalt
+                ctx.fillStyle = '#0b0f19';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Perspective Road lines
+                ctx.strokeStyle = '#1e2942';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(canvas.width * 0.2, canvas.height);
+                ctx.lineTo(canvas.width * 0.4, 0);
+                ctx.moveTo(canvas.width * 0.8, canvas.height);
+                ctx.lineTo(canvas.width * 0.6, 0);
+                ctx.stroke();
+
+                // Draw Animated Moving Vehicles
+                const time = Date.now() * 0.002;
+                const offset = (time * 50) % canvas.height;
+
+                // Vehicle 1
+                ctx.fillStyle = '#1e293b';
+                ctx.fillRect(canvas.width * 0.45, offset, 70, 40);
+
+                // Detection bounding box
+                ctx.strokeStyle = '#00f0ff';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(canvas.width * 0.45 - 5, offset - 5, 80, 50);
+
+                // Text Overlay ID above box
+                ctx.fillStyle = '#00f0ff';
+                ctx.font = '10px monospace';
+                ctx.fillText('TARGET: KBP 505 [98%]', canvas.width * 0.45 - 5, Math.max(15, offset - 10));
+
+                requestAnimationFrame(renderLoop);
+            }
+            renderLoop();
+        }
+
+        function initCityMapCanvas() {
+            const canvas = document.getElementById('city-overview-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            function drawMap() {
+                canvas.width = canvas.clientWidth || 500;
+                canvas.height = canvas.clientHeight || 300;
+
+                ctx.fillStyle = '#070a12';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Grid lines
+                ctx.strokeStyle = '#151d32';
+                ctx.lineWidth = 1;
+                for (let x = 0; x < canvas.width; x += 40) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+                }
+                for (let y = 0; y < canvas.height; y += 40) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+                }
+
+                // Camera Nodes & Pulsing
+                CAMERAS.forEach((cam, i) => {
+                    const cx = (cam.x / 800) * canvas.width;
+                    const cy = (cam.y / 500) * canvas.height;
+
+                    // Radar pulse
+                    ctx.strokeStyle = i % 2 === 0 ? 'rgba(0, 240, 255, 0.4)' : 'rgba(255, 94, 87, 0.4)';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, (Date.now() / 30 + i * 20) % 25, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Node Dot
+                    ctx.fillStyle = i % 2 === 0 ? '#00f0ff' : '#ff5e57';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Label
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.font = '10px Inter';
+                    ctx.fillText(cam.id, cx + 8, cy + 3);
+                });
+
+                requestAnimationFrame(drawMap);
+            }
+            drawMap();
+        }
+
+        function initGeoFullscreenMap() {
+            const canvas = document.getElementById('fullscreen-geo-map');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+
+            // Handle Click to Inspect Vehicle Speed Telemetry
+            canvas.onclick = function(e) {
+                const rect = canvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+
+                let clickedVehicle = null;
+                trackedVehicles.forEach(veh => {
+                    const pos = getVehiclePos(veh, canvas.width, canvas.height);
+                    const dist = Math.hypot(clickX - pos.x, clickY - pos.y);
+                    if (dist < 28) {
+                        clickedVehicle = veh;
+                    }
+                });
+
+                if (clickedVehicle) {
+                    openVehicleModal(clickedVehicle);
+                } else {
+                    CAMERAS.forEach(cam => {
+                        const cx = (cam.x / 800) * canvas.width;
+                        const cy = (cam.y / 500) * canvas.height;
+                        if (Math.hypot(clickX - cx, clickY - cy) < 20) {
+                            openCameraModal(cam);
+                        }
+                    });
+                }
+            };
+
+            function getVehiclePos(veh, w, h) {
+                const r = veh.route;
+                if (r.length === 2) {
+                    return {
+                        x: (r[0].x + (r[1].x - r[0].x) * veh.progress) * w,
+                        y: (r[0].y + (r[1].y - r[0].y) * veh.progress) * h,
+                        dx: r[1].x - r[0].x,
+                        dy: r[1].y - r[0].y
+                    };
+                } else if (r.length === 3) {
+                    if (veh.progress < 0.5) {
+                        const t = veh.progress * 2;
+                        return {
+                            x: (r[0].x + (r[1].x - r[0].x) * t) * w,
+                            y: (r[0].y + (r[1].y - r[0].y) * t) * h,
+                            dx: r[1].x - r[0].x,
+                            dy: r[1].y - r[0].y
+                        };
+                    } else {
+                        const t = (veh.progress - 0.5) * 2;
+                        return {
+                            x: (r[1].x + (r[2].x - r[1].x) * t) * w,
+                            y: (r[1].y + (r[2].y - r[1].y) * t) * h,
+                            dx: r[2].x - r[1].x,
+                            dy: r[2].y - r[1].y
+                        };
+                    }
+                }
+                return { x: w * 0.5, y: h * 0.5, dx: 1, dy: 0 };
+            }
+
+            function drawGeo() {
+                canvas.width = canvas.clientWidth || 800;
+                canvas.height = canvas.clientHeight || 600;
+
+                // Dark Cyber Background
+                ctx.fillStyle = '#070a14';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Grid Lines
+                ctx.strokeStyle = '#12192b';
+                ctx.lineWidth = 1;
+                for (let x = 0; x < canvas.width; x += 50) {
+                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+                }
+                for (let y = 0; y < canvas.height; y += 50) {
+                    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+                }
+
+                // Render Heatmap overlay if toggled
+                if (showHeatmap) {
+                    trackedVehicles.forEach(veh => {
+                        const pos = getVehiclePos(veh, canvas.width, canvas.height);
+                        const grad = ctx.createRadialGradient(pos.x, pos.y, 5, pos.x, pos.y, 60);
+                        grad.addColorStop(0, 'rgba(255, 94, 87, 0.4)');
+                        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                        ctx.fillStyle = grad;
+                        ctx.beginPath();
+                        ctx.arc(pos.x, pos.y, 60, 0, Math.PI * 2);
+                        ctx.fill();
+                    });
+                }
+
+                // Render Major City Highway Vectors
+                ctx.strokeStyle = '#1e2942';
+                ctx.lineWidth = 14;
+                ctx.lineCap = 'round';
+
+                const routes = [
+                    [{x: 0.12, y: 0.15}, {x: 0.45, y: 0.48}, {x: 0.88, y: 0.82}],
+                    [{x: 0.15, y: 0.82}, {x: 0.50, y: 0.50}, {x: 0.85, y: 0.18}],
+                    [{x: 0.08, y: 0.50}, {x: 0.92, y: 0.50}],
+                    [{x: 0.50, y: 0.08}, {x: 0.50, y: 0.92}],
+                    [{x: 0.88, y: 0.12}, {x: 0.12, y: 0.88}]
+                ];
+
+                routes.forEach(r => {
+                    ctx.beginPath();
+                    ctx.moveTo(r[0].x * canvas.width, r[0].y * canvas.height);
+                    for (let i = 1; i < r.length; i++) {
+                        ctx.lineTo(r[i].x * canvas.width, r[i].y * canvas.height);
+                    }
+                    ctx.stroke();
+                });
+
+                // Center Dash Lines
+                ctx.strokeStyle = '#00f0ff22';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([8, 8]);
+                routes.forEach(r => {
+                    ctx.beginPath();
+                    ctx.moveTo(r[0].x * canvas.width, r[0].y * canvas.height);
+                    for (let i = 1; i < r.length; i++) {
+                        ctx.lineTo(r[i].x * canvas.width, r[i].y * canvas.height);
+                    }
+                    ctx.stroke();
+                });
+                ctx.setLineDash([]);
+
+                // Draw Camera Nodes
+                CAMERAS.forEach((cam, i) => {
+                    const cx = (cam.x / 800) * canvas.width;
+                    const cy = (cam.y / 500) * canvas.height;
+
+                    // Camera Pulse Ring
+                    ctx.strokeStyle = '#05c46b66';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 10 + (Date.now() / 40 + i * 15) % 15, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Camera Node Marker
+                    ctx.fillStyle = '#05c46b';
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.font = '10px JetBrains Mono, monospace';
+                    ctx.fillText(cam.id, cx + 10, cy + 4);
+                });
+
+                // Update & Render Moving Vehicles
+                let overspeedCount = 0;
+                let totalSpeed = 0;
+
+                trackedVehicles.forEach(veh => {
+                    veh.progress += veh.speedStep;
+                    if (veh.progress > 1) veh.progress = 0;
+
+                    if (Math.random() < 0.05) {
+                        veh.liveSpeed += Math.floor((Math.random() - 0.48) * 3);
+                        if (veh.liveSpeed < 30) veh.liveSpeed = 30;
+                        if (veh.liveSpeed > 110) veh.liveSpeed = 110;
+                    }
+
+                    totalSpeed += veh.liveSpeed;
+                    const isOverLimit = veh.liveSpeed > veh.assumedSpeed;
+                    if (isOverLimit) overspeedCount++;
+
+                    const pos = getVehiclePos(veh, canvas.width, canvas.height);
+                    const markerColor = isOverLimit ? '#ff5e57' : '#00f0ff';
+
+                    const angle = Math.atan2(pos.dy, pos.dx);
+                    const arrowLen = 22;
+                    const endX = pos.x + Math.cos(angle) * arrowLen;
+                    const endY = pos.y + Math.sin(angle) * arrowLen;
+
+                    ctx.strokeStyle = markerColor;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(pos.x, pos.y);
+                    ctx.lineTo(endX, endY);
+                    ctx.stroke();
+
+                    ctx.strokeStyle = isOverLimit ? 'rgba(255, 94, 87, 0.6)' : 'rgba(0, 240, 255, 0.4)';
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 14 + Math.sin(Date.now() * 0.01) * 3, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    ctx.fillStyle = markerColor;
+                    ctx.beginPath();
+                    ctx.arc(pos.x, pos.y, 7, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    ctx.fillStyle = 'rgba(7, 10, 18, 0.88)';
+                    ctx.strokeStyle = markerColor;
+                    ctx.lineWidth = 1;
+                    const boxW = 110;
+                    const boxH = 30;
+                    const boxX = pos.x - boxW / 2;
+                    const boxY = pos.y - 42;
+
+                    ctx.beginPath();
+                    ctx.roundRect(boxX, boxY, boxW, boxH, 5);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = 'bold 10px JetBrains Mono, monospace';
+                    ctx.fillText(veh.plate, boxX + 6, boxY + 12);
+
+                    ctx.fillStyle = isOverLimit ? '#ff5e57' : '#00f0ff';
+                    ctx.font = '9px JetBrains Mono, monospace';
+                    ctx.fillText(`${veh.liveSpeed} km/h`, boxX + 6, boxY + 24);
+
+                    ctx.fillStyle = '#94a3b8';
+                    ctx.fillText(`[Limit: ${veh.assumedSpeed}]`, boxX + 54, boxY + 24);
+                });
+
+                // Update HUD telemetry counters
+                const overspeedEl = document.getElementById('hud-overspeed-count');
+                if (overspeedEl) overspeedEl.innerText = `${overspeedCount} Alert`;
+                const avgSpeedEl = document.getElementById('hud-avg-speed');
+                if (avgSpeedEl) avgSpeedEl.innerText = `${Math.round(totalSpeed / trackedVehicles.length)} km/h`;
+
+                requestAnimationFrame(drawGeo);
+            }
+
+            drawGeo();
+        }
+
+        function populateForensicsTable(records) {
+            const tbody = document.getElementById('forensics-table-body');
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            
+            const countEl = document.getElementById('results-count');
+            if (countEl) countEl.innerText = records.length;
+
+            records.forEach(item => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-dark-700/60 cursor-pointer transition';
+                tr.onclick = () => inspectPlate(item.plate);
+
+                const badge = item.status === 'Flagged'
+                    ? `<span class="px-2 py-0.5 rounded text-[10px] bg-red-500/20 text-neon-red font-bold">FLAGGED</span>`
+                    : item.status === 'Speeding'
+                    ? `<span class="px-2 py-0.5 rounded text-[10px] bg-amber-500/20 text-neon-amber font-bold">SPEEDING</span>`
+                    : `<span class="px-2 py-0.5 rounded text-[10px] bg-emerald-500/20 text-neon-emerald">NORMAL</span>`;
+
+                tr.innerHTML = `
+                    <td class="py-2.5 px-3 text-slate-400">${item.timestamp}</td>
+                    <td class="py-2.5 px-3"><span class="plate-badge px-1.5 py-0.5 text-xs">${item.plate}</span></td>
+                    <td class="py-2.5 px-3 text-slate-300">${item.camera}</td>
+                    <td class="py-2.5 px-3 text-neon-emerald">${item.confidence}</td>
+                    <td class="py-2.5 px-3">${badge}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            renderHeatmapTimeline();
+        }
+
+        function inspectPlate(plateNum) {
+            switchView('view-search');
+            const profilePlate = document.getElementById('profile-plate-number');
+            if (profilePlate) profilePlate.innerText = plateNum;
+            const filterInput = document.getElementById('filter-plate');
+            if (filterInput) filterInput.value = plateNum;
+            applyForensicFilters();
+            showToast(`Target Profile Loaded: ${plateNum}`);
+        }
+
+        function renderHeatmapTimeline() {
+            const container = document.getElementById('profile-heatmap-timeline');
+            if (!container) return;
+            container.innerHTML = '';
+            for (let i = 0; i < 28; i++) {
+                const sq = document.createElement('div');
+                const alpha = Math.random();
+                sq.className = 'h-4 rounded-sm border border-dark-600';
+                sq.style.backgroundColor = `rgba(0, 240, 255, ${alpha})`;
+                sq.title = `Day ${i + 1}: ${Math.floor(alpha * 10)} detections`;
+                container.appendChild(sq);
+            }
+        }
+
+        async function applyForensicFilters() {
+            const inputPlate = document.getElementById('filter-plate').value.trim().toUpperCase();
+            const locationVal = document.getElementById('filter-location').value;
+            const violationVal = document.getElementById('filter-violation').value;
+
+            const params = new URLSearchParams();
+            if (inputPlate) params.set('plate', inputPlate);
+            if (locationVal !== 'all') params.set('location', locationVal);
+            if (violationVal !== 'all') params.set('status', violationVal);
+            if (selectedColorFilterVal !== 'all') {
+                // Color is not stored by the current DB schema, so don't fake a result.
+                showToast('Vehicle color filter is unavailable in the current database schema.');
+                return;
+            }
+
+            try {
+                const rows = await apiGet(`/api/detections?${params.toString()}`);
+                const filtered = rows.map(normalizeDetection);
+                detectionDatabase = filtered;
+                populateForensicsTable(filtered);
+                showToast(`Database search: ${filtered.length} matches found.`);
+            } catch (error) {
+                console.error(error);
+                showToast('Database search failed.', true);
+            }
+        }
+
+        function selectColorFilter(btn, color) {
+            selectedColorFilterVal = color;
+            document.querySelectorAll('.color-filter-btn').forEach(b => {
+                b.classList.remove('border-neon-cyan', 'bg-cyan-500/20', 'text-neon-cyan');
+                b.classList.add('border-dark-600', 'bg-dark-800', 'text-slate-300');
+            });
+            btn.classList.add('border-neon-cyan', 'bg-cyan-500/20', 'text-neon-cyan');
+            btn.classList.remove('border-dark-600', 'bg-dark-800', 'text-slate-300');
+            applyForensicFilters();
+        }
+
+        function triggerAudioBeep() {
+            if (!audioAlertEnabled) return;
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime); // High pitch alert note A5
+                osc.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.25);
+                gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.25);
+            } catch (e) {
+                console.warn('Audio Context error:', e);
+            }
+        }
+
+        // Real-time data is refreshed from SQLite by loadDashboardData().
+        // No random detection records are generated in the browser.
+
+        // Notification Toast System
+        function showToast(message, isAlert = false) {
+            const toast = document.createElement('div');
+            toast.className = `fixed bottom-5 right-5 z-50 p-3.5 rounded-xl text-xs font-mono shadow-2xl flex items-center space-x-3 transition-all duration-300 border ${
+                isAlert ? 'bg-red-950/90 border-red-500 text-neon-red glow-red' : 'bg-dark-800/90 border-cyan-500/40 text-slate-100 glow-cyan'
+            }`;
+
+            toast.innerHTML = `
+                <i class="fa-solid ${isAlert ? 'fa-triangle-exclamation text-neon-red' : 'fa-circle-info text-neon-cyan'} text-base"></i>
+                <span>${message}</span>
+            `;
+
+            document.body.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+
+        function toggleAudioAlerts() {
+            audioAlertEnabled = !audioAlertEnabled;
+            const btn = document.getElementById('btn-audio-toggle');
+            btn.innerHTML = audioAlertEnabled 
+                ? `<i class="fa-solid fa-volume-high text-neon-emerald"></i>`
+                : `<i class="fa-solid fa-volume-xmark text-slate-400"></i>`;
+            showToast(audioAlertEnabled ? 'Alert Audio Beep Enabled' : 'Alert Audio Muted');
+            if (audioAlertEnabled) triggerAudioBeep();
+        }
+
+        function exportTableCSV() {
+            let csvContent = "data:text/csv;charset=utf-8,ID,Timestamp,Plate,Camera,Confidence,Status,Vehicle\n";
+            detectionDatabase.forEach(r => {
+                csvContent += `${r.id},${r.timestamp},${r.plate},"${r.camera}",${r.confidence},${r.status},"${r.vehicle}"\n`;
+            });
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `anpr_surveillance_log_${Date.now()}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            showToast('Exported Detection Logs to CSV File');
+        }
+    </script>
+</body>
+</html>
