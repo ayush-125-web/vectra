@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ANPR Command Dashboard</title>
+<style>
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        font-family: Inter, Arial, sans-serif;
+        background: #0b1020;
+        color: #e8edf7;
+    }
+    .app { display: flex; min-height: 100vh; }
+    aside {
+        width: 250px;
+        background: #11182b;
+        border-right: 1px solid #27304a;
+        padding: 24px 16px;
+        position: fixed;
+        top: 0; bottom: 0; left: 0;
+    }
+    .brand {
+        font-size: 22px;
+        font-weight: 800;
+        padding: 8px 12px 28px;
+        letter-spacing: .5px;
+    }
+    .brand span { color: #6ea8fe; }
+    nav button {
+        width: 100%;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        color: #9ca8bf;
+        padding: 13px 14px;
+        margin: 3px 0;
+        border-radius: 9px;
+        cursor: pointer;
+        font-size: 14px;
+    }
+    nav button:hover, nav button.active {
+        background: #1d2944;
+        color: white;
+    }
+    main {
+        margin-left: 250px;
+        width: calc(100% - 250px);
+        padding: 28px;
+    }
+    header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 25px;
+    }
+    h1 { margin: 0; font-size: 28px; }
+    .subtitle { color: #8995ad; margin-top: 6px; }
+    .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #141d32;
+        border: 1px solid #27304a;
+        padding: 9px 14px;
+        border-radius: 20px;
+        color: #aeb9ce;
+        font-size: 13px;
+    }
+    .dot {
+        width: 9px; height: 9px;
+        border-radius: 50%;
+        background: #777;
+    }
+    .dot.ok { background: #35d07f; }
+    .dot.bad { background: #f45b69; }
+
+    .page { display: none; }
+    .page.active { display: block; }
+
+    .cards {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 16px;
+        margin-bottom: 20px;
+    }
+    .card, .panel {
+        background: #11182b;
+        border: 1px solid #27304a;
+        border-radius: 13px;
+        padding: 20px;
+    }
+    .card-label { color: #8995ad; font-size: 13px; }
+    .card-value { font-size: 28px; font-weight: 750; margin-top: 8px; }
+
+    .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+    }
+    .grid3 {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+    }
+    .panel h2 {
+        font-size: 17px;
+        margin: 0 0 16px;
+    }
+    label {
+        display: block;
+        color: #9ca8bf;
+        font-size: 13px;
+        margin-bottom: 7px;
+    }
+    input, select {
+        width: 100%;
+        background: #0b1020;
+        color: #edf2fa;
+        border: 1px solid #303b59;
+        border-radius: 8px;
+        padding: 11px 12px;
+        outline: none;
+        margin-bottom: 12px;
+    }
+    input:focus, select:focus { border-color: #6ea8fe; }
+    button.primary {
+        border: 0;
+        background: #3478e5;
+        color: white;
+        padding: 11px 17px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 650;
+    }
+    button.secondary {
+        border: 1px solid #34405e;
+        background: #182138;
+        color: #dce5f5;
+        padding: 10px 15px;
+        border-radius: 8px;
+        cursor: pointer;
+    }
+    button:hover { opacity: .88; }
+
+    .result {
+        margin-top: 16px;
+        background: #0b1020;
+        border: 1px solid #27304a;
+        border-radius: 9px;
+        padding: 14px;
+        min-height: 80px;
+        overflow: auto;
+    }
+    pre {
+        white-space: pre-wrap;
+        word-break: break-word;
+        margin: 0;
+        color: #cdd7e9;
+        font-size: 13px;
+    }
+    .table-wrap { overflow-x: auto; }
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+    th, td {
+        padding: 11px 9px;
+        text-align: left;
+        border-bottom: 1px solid #27304a;
+    }
+    th { color: #8f9bb3; font-weight: 600; }
+    td { color: #d7dfed; }
+    .empty {
+        color: #7f8ba2;
+        padding: 18px 0;
+        text-align: center;
+    }
+    .message {
+        margin-top: 10px;
+        font-size: 13px;
+        color: #9ba8bf;
+    }
+    .error { color: #ff7c87; }
+    .success { color: #55d891; }
+
+    .density-list {
+        display: grid;
+        gap: 10px;
+    }
+    .density-item {
+        display: flex;
+        justify-content: space-between;
+        background: #0b1020;
+        border: 1px solid #27304a;
+        padding: 13px;
+        border-radius: 8px;
+    }
+
+    @media (max-width: 1000px) {
+        .cards { grid-template-columns: repeat(2, 1fr); }
+        .grid2, .grid3 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 700px) {
+        aside { width: 70px; padding: 12px 8px; }
+        .brand { font-size: 0; }
+        .brand span { font-size: 20px; }
+        nav button { font-size: 0; text-align: center; }
+        nav button::first-letter { font-size: 18px; }
+        main { margin-left: 70px; width: calc(100% - 70px); padding: 18px; }
+        .cards { grid-template-columns: 1fr 1fr; }
+    }
+</style>
+</head>
+
+<body>
+<div class="app">
+<aside>
+    <div class="brand">ANPR <span>COMMAND</span></div>
+    <nav>
+        <button class="active" data-page="dashboard">▣ Dashboard</button>
+        <button data-page="vehicle">⌕ Vehicle Search</button>
+        <button data-page="trajectory">↝ Trajectory</button>
+        <button data-page="density">◉ Traffic Density</button>
+        <button data-page="processing">▶ Process Camera</button>
+    </nav>
+</aside>
+
+<main>
+<header>
+    <div>
+        <h1 id="pageTitle">ANPR Dashboard</h1>
+        <div class="subtitle">Automatic Number Plate Recognition monitoring system</div>
+    </div>
+    <div class="status">
+        <span id="statusDot" class="dot"></span>
+        <span id="statusText">Checking API...</span>
+    </div>
+</header>
+
+<section id="dashboard" class="page active">
+    <div class="cards">
+        <div class="card"><div class="card-label">Cameras</div><div class="card-value" id="cameraCount">0</div></div>
+        <div class="card"><div class="card-label">Detections Today</div><div class="card-value" id="todayCount">0</div></div>
+        <div class="card"><div class="card-label">Loaded Detections</div><div class="card-value" id="detectionCount">0</div></div>
+        <div class="card"><div class="card-label">API</div><div class="card-value" id="apiValue">--</div></div>
+    </div>
+
+    <div class="grid2">
+        <div class="panel">
+            <h2>Quick Vehicle Search</h2>
+            <label>License Plate</label>
+            <input id="quickPlate" placeholder="e.g. BR01AB1234">
+            <button class="primary" onclick="quickSearch()">Search Vehicle</button>
+            <div id="quickResult" class="result"><div class="empty">Enter a plate number.</div></div>
+        </div>
+
+        <div class="panel">
+            <h2>System Health</h2>
+            <div id="healthResult" class="result"><div class="empty">Checking...</div></div>
+        </div>
+    </div>
+</section>
+
+<section id="vehicle" class="page">
+    <div class="panel">
+        <h2>Vehicle Search</h2>
+        <label>License Plate</label>
+        <input id="plateInput" placeholder="Enter plate number">
+        <button class="primary" onclick="searchVehicle()">Search</button>
+        <div id="vehicleResult" class="result"><div class="empty">Search for a vehicle to view its report.</div></div>
+    </div>
+</section>
+
+<section id="trajectory" class="page">
+    <div class="panel">
+        <h2>Vehicle Trajectory</h2>
+        <label>License Plate</label>
+        <input id="trajectoryPlate" placeholder="Enter plate number">
+        <div class="grid2">
+            <div>
+                <label>Start Time (optional)</label>
+                <input id="startTime" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div>
+                <label>End Time (optional)</label>
+                <input id="endTime" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+        </div>
+        <button class="primary" onclick="getTrajectory()">Get Trajectory</button>
+        <div id="trajectoryResult" class="result"><div class="empty">No trajectory loaded.</div></div>
+    </div>
+</section>
+
+<section id="density" class="page">
+    <div class="panel">
+        <h2>Traffic Density</h2>
+        <div class="grid3">
+            <div>
+                <label>Camera ID (optional)</label>
+                <input id="densityCamera" placeholder="CAM-01">
+            </div>
+            <div>
+                <label>Start Time (optional)</label>
+                <input id="densityStart" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div>
+                <label>End Time (optional)</label>
+                <input id="densityEnd" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+        </div>
+        <button class="primary" onclick="getDensity()">Load Density</button>
+        <div id="densityResult" class="result"><div class="empty">No density data loaded.</div></div>
+    </div>
+</section>
+
+<section id="processing" class="page">
+    <div class="panel">
+        <h2>Process Camera Video</h2>
+        <label>Camera ID</label>
+        <input id="processCamera" placeholder="CAM-01">
+        <label>Video Path</label>
+        <input id="videoPath" placeholder="videos/cam1.mp4">
+        <button class="primary" onclick="processCamera()">Start Processing</button>
+        <div id="processResult" class="result"><div class="empty">No processing request sent.</div></div>
+    </div>
+</section>
+
+</main>
+</div>
+
+<script>
+const API = "";
+
+function showPage(page) {
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    document.getElementById(page).classList.add("active");
+
+    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+    document.querySelector(`nav button[data-page="${page}"]`).classList.add("active");
+
+    const titles = {
+        dashboard: "ANPR Dashboard",
+        vehicle: "Vehicle Search",
+        trajectory: "Vehicle Trajectory",
+        density: "Traffic Density",
+        processing: "Process Camera"
+    };
+    document.getElementById("pageTitle").textContent = titles[page];
+}
+
+document.querySelectorAll("nav button").forEach(button => {
+    button.addEventListener("click", () => showPage(button.dataset.page));
+});
+
+async function apiFetch(url, options = {}) {
+    const response = await fetch(API + url, options);
+    let data;
+    try { data = await response.json(); }
+    catch { data = { error: "Server returned invalid JSON" }; }
+
+    if (!response.ok) {
+        throw new Error(data.error || data.message || `HTTP ${response.status}`);
+    }
+    return data;
+}
+
+function printResult(elementId, data) {
+    document.getElementById(elementId).innerHTML =
+        `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+}
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+}
+
+function errorResult(elementId, message) {
+    document.getElementById(elementId).innerHTML =
+        `<div class="error">${escapeHtml(message)}</div>`;
+}
+
+async function checkHealth() {
+    try {
+        const data = await apiFetch("/api/health");
+        document.getElementById("statusDot").className = "dot ok";
+        document.getElementById("statusText").textContent = "API Online";
+        document.getElementById("apiValue").textContent = "OK";
+        document.getElementById("healthResult").innerHTML =
+            `<pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre>`;
+    } catch (err) {
+        document.getElementById("statusDot").className = "dot bad";
+        document.getElementById("statusText").textContent = "API Offline";
+        document.getElementById("apiValue").textContent = "OFF";
+        document.getElementById("healthResult").innerHTML =
+            `<div class="error">${escapeHtml(err.message)}</div>`;
+    }
+}
+
+async function loadDashboard() {
+    try {
+        const data = await apiFetch("/api/dashboard");
+        const cameras = Array.isArray(data.cameras) ? data.cameras : [];
+        const detections = Array.isArray(data.detections) ? data.detections : [];
+
+        document.getElementById("cameraCount").textContent = cameras.length;
+        document.getElementById("detectionCount").textContent = detections.length;
+        document.getElementById("todayCount").textContent = data.today_detections ?? 0;
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function searchVehicle() {
+    const plate = document.getElementById("plateInput").value.trim();
+    if (!plate) return errorResult("vehicleResult", "Please enter a plate number.");
+
+    try {
+        const data = await apiFetch(`/api/vehicle/${encodeURIComponent(plate)}`);
+        printResult("vehicleResult", data);
+    } catch (err) {
+        errorResult("vehicleResult", err.message);
+    }
+}
+
+async function quickSearch() {
+    const plate = document.getElementById("quickPlate").value.trim();
+    if (!plate) return errorResult("quickResult", "Please enter a plate number.");
+
+    try {
+        const data = await apiFetch(`/api/vehicle/${encodeURIComponent(plate)}`);
+        printResult("quickResult", data);
+    } catch (err) {
+        errorResult("quickResult", err.message);
+    }
+}
+
+async function getTrajectory() {
+    const plate = document.getElementById("trajectoryPlate").value.trim();
+    if (!plate) return errorResult("trajectoryResult", "Please enter a plate number.");
+
+    const params = new URLSearchParams();
+    const start = document.getElementById("startTime").value.trim();
+    const end = document.getElementById("endTime").value.trim();
+
+    if (start) params.set("start_time", start);
+    if (end) params.set("end_time", end);
+
+    const query = params.toString() ? `?${params.toString()}` : "";
+
+    try {
+        const data = await apiFetch(`/api/trajectory/${encodeURIComponent(plate)}${query}`);
+        printResult("trajectoryResult", data);
+    } catch (err) {
+        errorResult("trajectoryResult", err.message);
+    }
+}
+
+async function getDensity() {
+    const params = new URLSearchParams();
+    const camera = document.getElementById("densityCamera").value.trim();
+    const start = document.getElementById("densityStart").value.trim();
+    const end = document.getElementById("densityEnd").value.trim();
+
+    if (camera) params.set("camera_id", camera);
+    if (start) params.set("start_time", start);
+    if (end) params.set("end_time", end);
+
+    const query = params.toString() ? `?${params.toString()}` : "";
+
+    try {
+        const data = await apiFetch(`/api/density${query}`);
+        printResult("densityResult", data);
+    } catch (err) {
+        errorResult("densityResult", err.message);
+    }
+}
+
+async function processCamera() {
+    const camera_id = document.getElementById("processCamera").value.trim();
+    const video_path = document.getElementById("videoPath").value.trim();
+
+    if (!camera_id || !video_path) {
+        return errorResult("processResult", "Camera ID and video path are required.");
+    }
+
+    document.getElementById("processResult").innerHTML =
+        `<div class="message">Processing camera... this may take some time.</div>`;
+
+    try {
+        const data = await apiFetch("/api/process-camera", {
+            method: "POST",
+            headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ camera_id, video_path })
+        });
+        printResult("processResult", data);
+    } catch (err) {
+        errorResult("processResult", err.message);
+    }
+}
+
+checkHealth();
+loadDashboard();
+</script>
+</body>
+</html>
