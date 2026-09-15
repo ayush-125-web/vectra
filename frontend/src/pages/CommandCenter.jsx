@@ -1,9 +1,22 @@
 import StatReadout from '../components/StatReadout'
 import CityMap from '../components/CityMap'
-import { summary, cameras, detections, alerts, cameraLoad } from '../data/mockData'
+import { summary, alerts } from '../data/mockData'
+import useDashboard from '../hooks/useDashboard'
 
 export default function CommandCenter() {
-  const recent = [...detections].reverse().slice(0, 6)
+  const {
+    activeCameras,
+    totalCameras,
+    cameras,
+    vehiclesToday,
+    recentDetections,
+    densityByNode,
+    avgSpeed,
+    connected,
+  } = useDashboard()
+
+  const recent = recentDetections.slice(0, 6)
+  // Priority alerts: left on mock data for now, as requested.
   const topAlerts = alerts.slice(0, 3)
 
   return (
@@ -13,16 +26,17 @@ export default function CommandCenter() {
           <h1 className="text-lg font-semibold text-ink-100">Command Center</h1>
           <p className="text-sm text-ink-500 mt-1">Five-node ANPR network — Chennai prototype grid</p>
         </div>
-        <div className="flex items-center gap-2 text-xs font-mono text-signal-green">
-          <span className="w-1.5 h-1.5 rounded-full bg-signal-green live-dot" />
-          LIVE
+        <div className={`flex items-center gap-2 text-xs font-mono ${connected ? 'text-signal-green' : 'text-ink-700'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${connected ? 'bg-signal-green live-dot' : 'bg-ink-700'}`} />
+          {connected ? 'LIVE' : 'CONNECTING'}
         </div>
       </header>
 
       <div className="grid grid-cols-4 gap-4">
-        <StatReadout label="Active cameras" value={summary.activeCameras} />
-        <StatReadout label="Vehicles today" value={summary.vehiclesToday.toLocaleString()} />
-        <StatReadout label="Avg. speed" value={summary.avgSpeed} unit="km/h" />
+        <StatReadout label="Active cameras" value={`${activeCameras}/${totalCameras}`} />
+        <StatReadout label="Vehicles today" value={vehiclesToday.toLocaleString()} />
+        <StatReadout label="Avg. speed" value={avgSpeed ?? '—'} unit="km/h" />
+        {/* Active alerts stat kept on mock data too, same as the Priority alerts panel below */}
         <StatReadout label="Active alerts" value={summary.activeAlerts} tone="red" />
       </div>
 
@@ -33,7 +47,9 @@ export default function CommandCenter() {
             <span className="text-[11px] font-mono text-ink-700">{cameras.length} nodes</span>
           </div>
           <div className="h-80">
-            <CityMap />
+            {/* CityMap needs a small update to read cam.active and color
+               the dot green/gray - see chat notes, file wasn't shared. */}
+            <CityMap cameras={cameras} />
           </div>
         </div>
 
@@ -57,7 +73,7 @@ export default function CommandCenter() {
         <div className="border border-base-500 bg-base-800 rounded p-5">
           <h2 className="text-sm font-medium text-ink-300 mb-4">Density by node</h2>
           <div className="space-y-3">
-            {cameraLoad.map(c => (
+            {densityByNode.map(c => (
               <div key={c.camera} className="flex items-center gap-3">
                 <span className="font-mono text-[11px] text-ink-500 w-16">{c.camera}</span>
                 <div className="flex-1 h-2 bg-base-600 rounded overflow-hidden">
