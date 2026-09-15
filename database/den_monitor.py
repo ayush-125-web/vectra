@@ -1,26 +1,21 @@
 """
 ANPR City-Wide Vehicle Tracking - Traffic Density Monitor
 =============================================================
-The "always running" part: keeps an in-memory buffer of the DISTINCT
-plates seen per camera, and flushes it into `traffic_density` every
-10 minutes on a background thread. Nobody has to ask for density -
-it's just kept up to date on its own the whole time the system runs.
+Keeps an in-memory buffer of the DISTINCT plates seen per camera and
+flushes it into `traffic_density` every 10 minutes on a background
+thread.
 
 Deduped by plate within each bucket on purpose: a car sitting at a
-signal can get OCR'd across several frames, and that shouldn't count
-as several vehicles. The same plate showing up again in a LATER
-bucket is a separate pass and does count again.
+signal can get OCR'd across several frames, and that shouldn't count as
+several vehicles. The same plate in a LATER bucket is a separate pass
+and does count again.
 
-Usage:
-    db = ANPRDatabase()
-    monitor = TrafficDensityMonitor(db)
-    monitor.start()                 # runs in the background from here on
+Only change for the parallel runner: _flush() now copies the buffer out
+first, releases the buffer lock, then takes the DB's write lock. This
+stops the background thread from interleaving with the main thread's
+detection inserts on the shared SQLite connection.
 
-    # every time a detection comes in, from anywhere in your pipeline:
-    monitor.record(camera_id, plate_number)
-
-    monitor.get_density()           # read back the bucketed counts
-    monitor.stop()                  # when shutting down
+Goes to: database/den_monitor.py
 """
 
 import threading
@@ -43,7 +38,7 @@ class TrafficDensityMonitor:
     def __init__(self, database, bucket_minutes: int = BUCKET_MINUTES):
         self.db = database
         self.bucket_minutes = bucket_minutes
-        self._buffer = defaultdict(set)          # camera_id -> {plate_number, ...}, current bucket only
+        self._buffer = defaultdict(set)      # camera_id -> {plate, ...}
         self._buffer_lock = threading.Lock()
         self._current_bucket = current_bucket_start()
         self._stop_event = threading.Event()
@@ -51,12 +46,9 @@ class TrafficDensityMonitor:
 
     def record(self, camera_id: str, plate_number: str) -> None:
         """
-        Call this once per detection. Adds the plate to an in-memory
-        set for that camera's current bucket - cheap enough to call on
-        every single OCR hit without touching the database, and a set
-        means the same plate showing up twice in one bucket (e.g. a
-        car re-detected across a few frames while it's at a signal)
-        only counts once.
+        Call once per detection. Cheap enough for every OCR hit, and a
+        set means the same plate twice in one bucket only counts once.
+        Thread-safe, so parallel workers could call it directly.
         """
         with self._buffer_lock:
             self._buffer[camera_id].add(plate_number)
@@ -64,20 +56,29 @@ class TrafficDensityMonitor:
     def _flush(self) -> None:
         """Writes the current buffer to the DB (one row per camera), then clears it."""
         with self._buffer_lock:
-            if self._buffer:
-                bucket = self._current_bucket
-                cur = self.db.conn.cursor()
-                for camera_id, plates in self._buffer.items():
-                    cur.execute("""
-                        INSERT INTO traffic_density (camera_id, bucket_start, vehicle_count)
-                        VALUES (?, ?, ?)
-                    """, (camera_id, bucket, len(plates)))
-                self.db.conn.commit()
+            if not self._buffer:
+                self._current_bucket = current_bucket_start()
+                return
+
+            snapshot = {cam: len(plates) for cam, plates in self._buffer.items()}
+            bucket = self._current_bucket
+
             self._buffer.clear()
             self._current_bucket = current_bucket_start()
 
+        # DB write happens outside the buffer lock, and under the DB's
+        # own lock so it can't interleave with a detection insert.
+        with self.db.lock:
+            cur = self.db.conn.cursor()
+            for camera_id, count in snapshot.items():
+                cur.execute("""
+                    INSERT INTO traffic_density (camera_id, bucket_start, vehicle_count)
+                    VALUES (?, ?, ?)
+                """, (camera_id, bucket, count))
+            self.db.conn.commit()
+
     def _run_loop(self) -> None:
-        """Background loop - wakes up every `bucket_minutes` and flushes the buffer."""
+        """Background loop - wakes every `bucket_minutes` and flushes."""
         while not self._stop_event.is_set():
             woke_early = self._stop_event.wait(self.bucket_minutes * 60)
             if not woke_early:
@@ -91,7 +92,7 @@ class TrafficDensityMonitor:
         self._thread.start()
 
     def stop(self) -> None:
-        """Stops the loop and flushes whatever is still sitting in the buffer."""
+        """Stops the loop and flushes whatever is still in the buffer."""
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=1)
