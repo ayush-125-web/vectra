@@ -35,6 +35,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 
 from database.anpr_system import ANPRSystem
@@ -52,9 +53,24 @@ ACTIVE_WINDOW_MINUTES = 5
 DASHBOARD_PUSH_INTERVAL_SECONDS = 4
 
 app = Flask(__name__)
-# threading mode needs no extra async server (eventlet/gevent) - good
-# enough for a dashboard that pushes a few KB every few seconds.
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+
+CORS(
+    app,
+    resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:5173",
+                "http://127.0.0.1:5001"
+            ]
+        }
+    }
+)
+
+socketio = SocketIO(
+    app,
+    cors_allowed_origins="*",
+    async_mode="threading"
+)
 
 # One coordinator for the complete ANPR system.
 system = ANPRSystem(
@@ -123,47 +139,139 @@ def _recent_detections(limit=6):
 
 def _density_by_node():
     """
-    Live-ish vehicles/min per camera, straight from the density
-    monitor's in-memory buffer for the bucket that's currently filling
-    (not yet flushed to traffic_density, which only happens every 10
-    min). Cameras with nothing in the current bucket show 0, not
-    "missing".
+    Live traffic density per camera.
+
+    Density = number of unique vehicles detected by that camera
+              during the last 60 seconds.
+
+    This reads directly from the detections table, so it also works
+    when ANPR processing is running in another Python process.
     """
-    monitor = system.density_monitor
 
-    with monitor._buffer_lock:
-        buffer_snapshot = {cam: len(plates) for cam, plates in monitor._buffer.items()}
-        bucket_start_str = monitor._current_bucket
-
-    bucket_start = datetime.strptime(bucket_start_str, "%Y-%m-%d %H:%M:%S")
-    elapsed_minutes = max((datetime.now() - bucket_start).total_seconds() / 60, 1)
+    cutoff = (
+        datetime.now() - timedelta(seconds=60)
+    ).strftime("%Y-%m-%d %H:%M:%S")
 
     cur = system.db.conn.cursor()
-    cur.execute("SELECT camera_id FROM cameras ORDER BY camera_id")
-    all_camera_ids = [row["camera_id"] for row in cur.fetchall()]
+
+    # Count unique plates detected by each camera
+    # during the last 60 seconds.
+    cur.execute(
+        """
+        SELECT
+            camera_id,
+            COUNT(DISTINCT plate_number) AS vehicle_count
+        FROM detections
+        WHERE timestamp >= ?
+        GROUP BY camera_id
+        """,
+        (cutoff,)
+    )
+
+    density_counts = {
+        row["camera_id"]: row["vehicle_count"]
+        for row in cur.fetchall()
+    }
+
+    # Get all registered cameras so cameras with no
+    # detections still appear as 0/min.
+    cur.execute(
+        "SELECT camera_id FROM cameras ORDER BY camera_id"
+    )
+
+    all_camera_ids = [
+        row["camera_id"]
+        for row in cur.fetchall()
+    ]
 
     return [
         {
             "camera": camera_id,
-            "density": round(buffer_snapshot.get(camera_id, 0) / elapsed_minutes, 1),
+            "density": density_counts.get(camera_id, 0)
         }
         for camera_id in all_camera_ids
     ]
 
 
+def _hourly_traffic():
+    """
+    Traffic volume for the last 12 hours.
+
+    Counts unique vehicles detected in each hour
+    from the detections table.
+    """
+
+    now = datetime.now()
+
+    # Start of current hour
+    current_hour = now.replace(
+        minute=0,
+        second=0,
+        microsecond=0
+    )
+
+    # Last 12 hours including current hour
+    start_hour = current_hour - timedelta(hours=11)
+
+    cur = system.db.conn.cursor()
+
+    cur.execute(
+        """
+        SELECT
+            strftime('%Y-%m-%d %H:00:00', timestamp) AS hour_bucket,
+            COUNT(DISTINCT plate_number) AS vehicle_count
+        FROM detections
+        WHERE timestamp >= ?
+        GROUP BY hour_bucket
+        ORDER BY hour_bucket
+        """,
+        (start_hour.strftime("%Y-%m-%d %H:%M:%S"),)
+    )
+
+    rows = cur.fetchall()
+
+    # Convert DB result into a dictionary
+    db_data = {
+        row["hour_bucket"]: row["vehicle_count"]
+        for row in rows
+    }
+
+    result = []
+
+    # Always return all 12 hours,
+    # even if some hours have zero detections.
+    for i in range(12):
+        hour = start_hour + timedelta(hours=i)
+
+        key = hour.strftime("%Y-%m-%d %H:00:00")
+
+        result.append({
+            "hour": hour.strftime("%H:%M"),
+            "vehicles": db_data.get(key, 0)
+        })
+
+    return result
+
+
 def _build_dashboard_payload():
     cameras = _camera_status()
+
     return {
         "active_cameras": sum(1 for c in cameras if c["active"]),
         "total_cameras": len(cameras),
         "cameras": cameras,
+
         "vehicles_today": _vehicles_today(),
+
         "recent_detections": _recent_detections(6),
+
+        # Live density from last 60 seconds
         "density_by_node": _density_by_node(),
-        # NOTE: there is no speed data anywhere in the schema
-        # (detections has no speed column, and nothing derives it from
-        # inter-camera timing yet). Sending null rather than a made-up
-        # number - the UI should show "-" until this is wired for real.
+
+        # Real hourly traffic from database
+        "hourly_traffic": _hourly_traffic(),
+
+        # Speed is not implemented yet
         "avg_speed": None,
     }
 

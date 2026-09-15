@@ -87,23 +87,6 @@ export default function CommandCenter() {
             ))}
           </div>
         </div>
-
-        <div className="border border-base-500 bg-base-800 rounded p-5">
-          <h2 className="text-sm font-medium text-ink-300 mb-4">Priority alerts</h2>
-          <div className="space-y-2.5">
-            {topAlerts.map(a => (
-              <div key={a.id} className="flex items-start gap-3 text-sm">
-                <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${
-                  a.severity === 'HIGH' ? 'bg-signal-red' : a.severity === 'MEDIUM' ? 'bg-signal-amber' : 'bg-ink-700'
-                }`} />
-                <div>
-                  <div className="text-ink-100 font-mono text-[13px]">{a.plate}</div>
-                  <div className="text-[11px] text-ink-500">{a.camera} · {a.time} — {a.note}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   )
