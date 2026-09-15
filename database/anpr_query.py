@@ -73,6 +73,22 @@ class PlateQueryEngine:
         row = cur.fetchone()
         return dict(row) if row else None
 
+    def get_active_blacklist(self):
+        cur = self.db.conn.cursor()
+
+        cur.execute("""
+        SELECT plate_number, reason, flagged_on
+        FROM blacklist
+        WHERE status = 'active'
+        ORDER BY flagged_on DESC
+        """)
+
+        rows = cur.fetchall()
+
+        return [dict(row) for row in rows]
+
+    
+
     def query(self, plate_number: str, start_time=None, end_time=None) -> dict:
         """Main entry point - full report for a plate."""
         plate_number = plate_number.strip().upper()

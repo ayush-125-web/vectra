@@ -78,6 +78,12 @@ class ANPRSystem:
     def register_camera(self, camera_id, location_name, road_name=None):
         self.db.add_camera(camera_id, location_name, road_name)
 
+
+    def get_active_blacklist(self):
+         return self.query_engine.get_active_blacklist()  
+
+
+
     # -----------------------------------------------------------------
     # Storage
     # -----------------------------------------------------------------
