@@ -65,6 +65,9 @@ class PlateDetector:
             text
         )
 
+        if len(text) != 7:
+          return ""
+
         return text
 
 
@@ -349,13 +352,13 @@ class PlateDetector:
 if __name__ == "__main__":
 
     detector = PlateDetector(
-        model_path="models/best.pt",
+        model_path="ai/models/best.pt",
         frequency_threshold=5
     )
 
 
     final_vector = detector.process_video(
-        "../data/videos/cam3.mp4"
+        "data/videos/cam3.mp4"
     )
 
 
