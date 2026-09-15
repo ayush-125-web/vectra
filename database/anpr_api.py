@@ -41,8 +41,6 @@ from flask_socketio import SocketIO, emit
 from database.anpr_system import ANPRSystem
 
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-HTML_FILE = BASE_DIR / "anpr_design_connected.html"
 
 # A camera counts as "active" if it has logged a detection in the last
 # N minutes. Tune this to however chatty your camera feeds actually are.
@@ -83,11 +81,6 @@ system = ANPRSystem(
 # -------------------------------------------------------------------
 # FRONTEND
 # -------------------------------------------------------------------
-
-@app.route("/")
-def home():
-    """Open the existing dashboard HTML."""
-    return send_from_directory(BASE_DIR, "anpr_design_connected.html")
 
 
 # -------------------------------------------------------------------
