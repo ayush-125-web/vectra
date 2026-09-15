@@ -12,6 +12,20 @@ between two workers - you get garbage OCR or a hard crash.
 cv2.imshow() only works on the main thread, so pass show=False when
 several videos are running at once.
 
+LIVE MODE
+---------
+loop=True makes process_video() restart the video from frame 0 every
+time it ends, so a 30-second clip behaves like a permanent camera feed.
+Because it never truly "ends", it can't wait until the video finishes
+to hand back a final vector - so instead, pass on_verified (a
+callback) and it fires the moment a plate crosses frequency_threshold,
+in real time. That plate's counter is then reset, so if the same car
+loops back around (or the clip plays again), it counts as a fresh pass
+and can fire again - which is exactly what you want for a live feed.
+
+stop_event (a threading.Event) lets an outside controller stop a
+looping video cleanly.
+
 Goes to: ai/detection/plateDetection.py
 """
 
@@ -32,12 +46,19 @@ class PlateDetector:
         show=False,
         frame_skip=1,
         conf=0.4,
+        on_verified=None,
     ):
         self.model_path = model_path
         self.frequency_threshold = frequency_threshold
         self.show = show
         self.frame_skip = max(1, int(frame_skip))
         self.conf = conf
+
+        # Called as on_verified(tag, plate_text, frequency, avg_confidence)
+        # the instant a plate crosses the threshold. Used by live mode to
+        # push a detection to the DB immediately instead of waiting for
+        # the video to end (which, in loop mode, never happens).
+        self.on_verified = on_verified
 
         self.model = YOLO(model_path)
         self.ocr = PaddleOCR(lang="en", use_angle_cls=True)
@@ -55,9 +76,9 @@ class PlateDetector:
         """
         Wipe per-video state.
 
-        This matters a lot. Without it a detector reused for CAM-02
-        still holds CAM-01's verified plates, and those get written to
-        the DB a second time under the wrong camera_id.
+        Without this a detector reused for CAM-02 still holds CAM-01's
+        verified plates, and those get written to the DB a second time
+        under the wrong camera_id.
         """
         self.plate_data.clear()
         self.final_plates.clear()
@@ -78,7 +99,7 @@ class PlateDetector:
     # UPDATE PLATE DATA
     # =====================================================
 
-    def update_plate(self, plate_text, confidence):
+    def update_plate(self, plate_text, confidence, tag=None):
         entry = self.plate_data[plate_text]
 
         entry["frequency"] += 1
@@ -92,6 +113,16 @@ class PlateDetector:
                 "frequency": frequency,
                 "avg_confidence": avg_confidence,
             }
+
+            if self.on_verified:
+                self.on_verified(tag, plate_text, frequency, avg_confidence)
+
+                # Reset just this plate's counter. In live/loop mode this
+                # is what lets the SAME plate fire again later - either
+                # the same car really does pass again, or the clip loops
+                # back to frame 0 and "sees" it again. Without this reset
+                # it would only ever fire once, the very first time.
+                del self.plate_data[plate_text]
 
         return frequency, avg_confidence
 
@@ -107,16 +138,26 @@ class PlateDetector:
         tag=None,
         verbose=True,
         reset=True,
+        loop=False,
+        stop_event=None,
     ):
         """
-        Run detection over one video and return the final vector:
-
-            [[plate_number, frequency, avg_confidence], ...]
+        Run detection over one video.
 
         show        - draw a live window. MUST be False off the main thread.
         frame_skip  - process every Nth frame (2 or 3 roughly halves runtime).
-        tag         - prefix for log lines, usually the camera_id.
+        tag         - prefix for log lines / callback, usually the camera_id.
         reset       - clear previous video's plates first. Keep this True.
+        loop        - restart from frame 0 when the video ends, forever.
+                      Combine with on_verified (set in __init__) so results
+                      stream out instead of only arriving at the end.
+        stop_event  - threading.Event; when set, the loop exits (checked
+                      once per frame). Required to ever stop loop=True.
+
+        Returns the final vector accumulated up to the point it stopped:
+            [[plate_number, frequency, avg_confidence], ...]
+        In loop mode this only matters for whatever hasn't already been
+        reset-and-fired via on_verified.
         """
         if reset:
             self.reset()
@@ -137,9 +178,17 @@ class PlateDetector:
 
         try:
             while True:
+                if stop_event is not None and stop_event.is_set():
+                    break
+
                 ret, frame = cap.read()
 
                 if not ret:
+                    if loop:
+                        cap.release()
+                        cap = cv2.VideoCapture(video_path)
+                        frame_index = 0
+                        continue
                     break
 
                 frame_index += 1
@@ -183,7 +232,7 @@ class PlateDetector:
                                     continue
 
                                 frequency, avg_confidence = self.update_plate(
-                                    plate_text, confidence
+                                    plate_text, confidence, tag=tag
                                 )
 
                                 if verbose:
@@ -217,6 +266,8 @@ class PlateDetector:
                     cv2.imshow(window, frame)
 
                     if cv2.waitKey(1) & 0xFF == ord("q"):
+                        if stop_event is not None:
+                            stop_event.set()
                         break
 
         finally:

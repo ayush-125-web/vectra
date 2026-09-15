@@ -8,10 +8,11 @@ their logic.
                  -> ANPRDatabase  -> TrafficDensityMonitor
     ANPRDatabase -> PlateQueryEngine -> dashboard / API
 
-Two ways to run the cameras:
+Three ways to run the cameras:
 
-    process_all_cameras(cameras)           one after another
-    process_all_cameras_parallel(cameras)  all at once
+    process_all_cameras(cameras)             one after another
+    process_all_cameras_parallel(cameras)    all at once, videos run once
+    (see anpr_live.py)                       all at once, videos loop forever
 
 Goes to: database/anpr_system.py
 """
@@ -35,8 +36,8 @@ class ANPRSystem:
         self.db = ANPRDatabase(db_name)
 
         # 2. Detection settings. The detector itself is built lazily -
-        #    a parallel run never uses this one (each worker builds its
-        #    own), so there is no point loading the models here.
+        #    a parallel/live run never uses this one (each worker builds
+        #    its own), so there is no point loading the models here.
         self.model_path = model_path
         self.frequency_threshold = frequency_threshold
         self.show = show
@@ -98,39 +99,54 @@ class ANPRSystem:
 
     def store_vector(self, camera_id, final_vector):
         """
-        Write one camera's final vector to the DB.
+        Write a whole batch (one camera's final vector) to the DB in one
+        go. Used by the sequential and parallel (one-shot) run modes,
+        where a camera's video actually finishes.
 
-        Call this from the MAIN thread only. It is the single writer for
-        SQLite, which is what lets the detection side run in parallel.
+        Call this from the MAIN thread only - it is the single writer
+        for SQLite, which is what lets detection itself run in parallel.
         """
         self._ensure_camera(camera_id)
 
         for plate_number, frequency, avg_confidence in final_vector:
-            timestamp = self.db.add_detection(
-                plate_number=plate_number,
-                camera_id=camera_id,
-                confidence_score=avg_confidence,
-            )
-
-            self.density_monitor.record(
-                camera_id=camera_id,
-                plate_number=plate_number,
-            )
+            self.store_single_detection(camera_id, plate_number, avg_confidence)
 
             print(
                 f"DB UPDATED | camera={camera_id} | plate={plate_number} "
-                f"| frequency={frequency} | confidence={avg_confidence} "
-                f"| time={timestamp}"
+                f"| frequency={frequency} | confidence={avg_confidence}"
             )
 
         return final_vector
+
+    def store_single_detection(self, camera_id, plate_number, confidence):
+        """
+        Write ONE verified plate to the DB. Used by live mode, where
+        results trickle in one at a time via a callback instead of
+        arriving as a batch at the end of a video.
+
+        Call this from the MAIN thread only, same rule as store_vector.
+        """
+        self._ensure_camera(camera_id)
+
+        timestamp = self.db.add_detection(
+            plate_number=plate_number,
+            camera_id=camera_id,
+            confidence_score=confidence,
+        )
+
+        self.density_monitor.record(
+            camera_id=camera_id,
+            plate_number=plate_number,
+        )
+
+        return timestamp
 
     # -----------------------------------------------------------------
     # Processing
     # -----------------------------------------------------------------
 
     def process_camera(self, camera_id, video_path):
-        """Process ONE camera on this thread (blocking)."""
+        """Process ONE camera on this thread (blocking), video runs once."""
         print(f"\n{'=' * 60}")
         print(f"PROCESSING CAMERA: {camera_id}")
         print(f"VIDEO: {video_path}")
@@ -145,7 +161,7 @@ class ANPRSystem:
 
     def process_all_cameras(self, cameras):
         """
-        Sequential: one camera at a time.
+        Sequential: one camera at a time, each video runs once.
 
         cameras = {"CAM-01": "data/videos/cam1.mp4", ...}
         """
@@ -163,15 +179,10 @@ class ANPRSystem:
         threads_per_worker=1,
     ):
         """
-        Parallel: several cameras at once.
+        Parallel: several cameras at once, each video runs once and the
+        call returns when every video has finished.
 
         cameras = {"CAM-01": "data/videos/cam1.mp4", ...}
-
-        workers     - how many videos run at the same time. 2-3 is the
-                      sweet spot on a laptop; more just thrashes.
-        mode        - "thread" (default) or "process".
-        frame_skip  - process every Nth frame. 2 or 3 gives a bigger
-                      speedup than parallelism does on its own.
         """
         from database.anpr_parallel import run_cameras_parallel
 
@@ -183,6 +194,31 @@ class ANPRSystem:
             frame_skip=frame_skip,
             threads_per_worker=threads_per_worker,
         )
+
+    def run_realtime(self, cameras, frame_skip=1):
+        """
+        Each video plays through ONCE, several at a time, but a plate is
+        stored the INSTANT it crosses frequency_threshold - not batched
+        up and written only after the whole video finishes. Returns
+        when every camera's video has ended. See anpr_live.py.
+
+        cameras = {"CAM-01": "data/videos/cam1.mp4", ...}
+        """
+        from database.anpr_live import run_realtime
+
+        return run_realtime(self, cameras, frame_skip=frame_skip)
+
+    def run_live(self, cameras, frame_skip=2):
+        """
+        Same real-time storage as run_realtime(), but every video loops
+        forever, acting like a permanent camera feed. Runs until
+        Ctrl+C. See anpr_live.py.
+
+        cameras = {"CAM-01": "data/videos/cam1.mp4", ...}
+        """
+        from database.anpr_live import run_live
+
+        return run_live(self, cameras, frame_skip=frame_skip)
 
     # -----------------------------------------------------------------
     # Query shortcuts
