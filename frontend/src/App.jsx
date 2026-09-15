@@ -4,6 +4,7 @@ import CommandCenter from './pages/CommandCenter'
 import VehicleTracking from './pages/VehicleTracking'
 import Analytics from './pages/Analytics'
 import Alerts from './pages/Alerts'
+import LiveCameras from './pages/LiveCameras'
 
 export default function App() {
   return (
@@ -11,6 +12,7 @@ export default function App() {
       <Sidebar />
       <main className="flex-1 overflow-y-auto">
         <Routes>
+          <Route path='/live-cameras' element={<LiveCameras/>}></Route>
           <Route path="/" element={<CommandCenter />} />
           <Route path="/tracking" element={<VehicleTracking />} />
           <Route path="/analytics" element={<Analytics />} />

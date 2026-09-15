@@ -5,6 +5,7 @@ const items = [
   { to: '/tracking', label: 'Vehicle Tracking', icon: SearchIcon },
   { to: '/analytics', label: 'Analytics', icon: BarsIcon },
   { to: '/alerts', label: 'Alert Center', icon: BellIcon },
+  {to:'/live-cameras', label:'Live Cameras', icon:BellIcon}
 ]
 
 export default function Sidebar() {
